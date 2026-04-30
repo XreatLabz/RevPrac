@@ -137,6 +137,15 @@ final class KitDefinitionContractTest {
                         rules,
                         true),
                 "KitDefinition should reject blank display names");
+        assertIllegalArgument(
+                () -> definitionConstructor.newInstance(
+                        instantiateRecord(loadClass(KIT_ID_TYPE), Map.of("value", "nodebuff")),
+                        "NoDebuff",
+                        inventory,
+                        Arrays.asList(effect, null),
+                        rules,
+                        true),
+                "KitDefinition should reject null potion effect entries");
 
         Object definition = definitionConstructor.newInstance(
                 instantiateRecord(loadClass(KIT_ID_TYPE), Map.of("value", "nodebuff")),

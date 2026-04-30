@@ -1,7 +1,5 @@
 package io.github.xreatlabz.revprac.domain.kits;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -32,6 +30,10 @@ public record KitDefinition(
 
     private static List<KitPotionEffect> immutableEffectCopy(List<KitPotionEffect> effects) {
         Objects.requireNonNull(effects, "potionEffects");
-        return Collections.unmodifiableList(new ArrayList<>(effects));
+        try {
+            return List.copyOf(effects);
+        } catch (NullPointerException exception) {
+            throw new IllegalArgumentException("potionEffects must not contain null entries", exception);
+        }
     }
 }
