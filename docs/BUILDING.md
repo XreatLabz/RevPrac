@@ -24,6 +24,26 @@ Run the Paper smoke check after building the JAR:
 
 The script downloads the latest stable Paper build for Minecraft `1.21.11`, installs the built RevPrac JAR into a temporary server under `build/smoke/`, accepts the local EULA for that throwaway server, and fails unless the log contains `RevPrac enabled`.
 
+## Phase 1 Bootstrap Smoke
+
+For Phase 1 bootstrap/config wiring, verify the lifecycle boundary as part of local smoke work:
+
+- `plugin.yml` still names the `JavaPlugin` main class.
+- `config.yml` is bundled in `src/main/resources/` and copied before config reads.
+- `saveDefaultConfig()` or `saveResource("config.yml", false)` runs from `onEnable()`, not the constructor.
+- `JavaPlugin#getConfig()` is only read after the config resource has been saved.
+
+Suggested checks:
+
+```bash
+./gradlew test
+./scripts/smoke-run-paper.sh
+rg -n "saveDefaultConfig|saveResource|getConfig|onLoad|onEnable|onDisable" src/main/java src/main/resources
+rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java
+```
+
+The import check should only report `RevPracPlugin`, `bootstrap` if unavoidable, and `adapters.paper`. It should not report `application` or `ports` packages.
+
 ## Dependency Updates
 
 Dependency versions live in `gradle/libs.versions.toml`.
