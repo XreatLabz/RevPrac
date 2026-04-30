@@ -27,8 +27,9 @@ RevPrac currently has a minimal Paper plugin scaffold. This page records the act
 - Metadata: `src/main/resources/plugin.yml`.
 - Bundled config: `src/main/resources/config.yml`.
 - Runtime boundary: `bootstrap` wires Paper adapters to plain Java config validation and stores a shutdown-capable runtime.
-- Plain Java contracts: `application.config`, `application.result`, `ports.config`, and `ports.lifecycle` stay free of Bukkit/Paper imports.
-- Tests: JUnit Jupiter and MockBukkit for plugin load/enable.
+- Plain Java contracts: `application.config`, `application.players`, `application.result`, `domain.players`, `ports.config`, `ports.lifecycle`, and `ports.players` stay free of Bukkit/Paper imports.
+- Player-session safety: `domain.players` owns immutable session/snapshot contracts; `application.players.PlayerSessionService` owns transitions, duplicate-join behavior, pending restorations, and shutdown recovery; `adapters.paper.players` owns Paper capture/restore and join/quit listener wiring.
+- Tests: JUnit Jupiter and MockBukkit for plugin load/enable plus player-session adapter and lifecycle coverage.
 - Runtime check: `scripts/smoke-run-paper.sh` boots a real Paper 1.21.11 server and confirms RevPrac enables.
 
 ## Planned Domains
@@ -49,7 +50,11 @@ RevPrac currently has a minimal Paper plugin scaffold. This page records the act
 - Keep runtime integrations explicit rather than hidden behind global lookups.
 - Keep bootstrap/config parsing at the edge, then pass immutable config models inward.
 - Add tests around domain decisions before relying on live server behavior.
+- Do not restore or teleport directly inside `PlayerJoinEvent`; Paper join handling that may restore location is deferred to the next server tick.
+- Paper restore closes open inventories, validates the target world/location before inventory mutation, and includes cursor state in the captured inventory snapshot.
+- Bootstrap schedules session initialization for players already online when the plugin enables.
+- Pending player restorations are in memory until the persistence phase introduces durable player data.
 
 ## Next Architecture Step
 
-The next code should build on the bootstrap/config boundary before adding commands or Paper event handlers. Keep practice logic testable without a live server, keep config loading at the Paper boundary, and use Paper adapters only at runtime boundaries.
+The next code should build arena and kit registries on top of the player-session safety boundary. Keep practice logic testable without a live server, keep config loading at the Paper boundary, and use Paper adapters only at runtime boundaries.
