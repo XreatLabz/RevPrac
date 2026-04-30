@@ -109,17 +109,18 @@ Validation:
 
 ### Phase 1: Core Bootstrap and Contracts
 
-Status: Planned
+Status: Implemented
 
 Goal:
 
-- introduce the service graph, core value objects, ports, result/error taxonomy, and immutable config models
+- introduce the service graph, core value objects, ports, result/error taxonomy, and immutable config models backed by a bundled `config.yml`
 - implement one plain Java service that is testable without Paper
 
 Exit criteria:
 
 - core bootstrap wiring is explicit and discoverable
 - domain contracts do not depend on Bukkit/Paper types
+- config bootstrap saves the bundled resource before `JavaPlugin#getConfig()` is read
 - config parsing and validation fail fast with clear errors
 - the first service has direct unit coverage
 

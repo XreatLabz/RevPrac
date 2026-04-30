@@ -20,4 +20,4 @@ This directory is the source of truth for RevPrac. `AGENTS.md` should stay short
 
 ## Current State
 
-RevPrac now has a minimal Paper 1.21.11 plugin scaffold with Gradle, tests, CI, and a real Paper smoke harness. No arena, kit, queue, match, command, storage, or player-stat feature modules exist yet.
+RevPrac now has a minimal Paper 1.21.11 plugin scaffold with Gradle, tests, CI, a real Paper smoke harness, and Phase 1 bootstrap/config contracts. No arena, kit, queue, match, command, storage, or player-stat feature modules exist yet.
