@@ -52,12 +52,16 @@ public final class PaperKitLoadoutAdapter {
         List<PotionEffect> potionEffects = definition.potionEffects().stream()
                 .map(PaperKitLoadoutAdapter::restoreEffect)
                 .toList();
+        PlayerInventory inventory = player.getInventory();
+        requireSectionLength(storageContents, inventory.getStorageContents().length, "storage");
+        requireSectionLength(armorContents, inventory.getArmorContents().length, "armor");
+        requireSectionLength(extraContents, inventory.getExtraContents().length, "extra");
 
         player.closeInventory();
-        player.getInventory().setStorageContents(storageContents);
-        player.getInventory().setArmorContents(armorContents);
-        player.getInventory().setExtraContents(extraContents);
-        player.getInventory().setHeldItemSlot(definition.inventory().selectedSlot());
+        inventory.setStorageContents(storageContents);
+        inventory.setArmorContents(armorContents);
+        inventory.setExtraContents(extraContents);
+        inventory.setHeldItemSlot(definition.inventory().selectedSlot());
 
         player.getActivePotionEffects().stream()
                 .map(PotionEffect::getType)
@@ -128,6 +132,13 @@ public final class PaperKitLoadoutAdapter {
             return ItemStack.deserializeBytes(Base64.getDecoder().decode(encodedItem));
         } catch (RuntimeException exception) {
             throw new IllegalArgumentException("Invalid item payload at " + path, exception);
+        }
+    }
+
+    private static void requireSectionLength(ItemStack[] items, int expectedSize, String section) {
+        if (items.length != expectedSize) {
+            throw new IllegalArgumentException(
+                    section + " must contain exactly " + expectedSize + " entries but had " + items.length);
         }
     }
 }

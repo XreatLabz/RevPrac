@@ -12,10 +12,12 @@ import io.github.xreatlabz.revprac.domain.kits.KitInventory;
 import io.github.xreatlabz.revprac.domain.kits.KitPotionEffect;
 import io.github.xreatlabz.revprac.domain.kits.KitRules;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
@@ -28,6 +30,10 @@ import org.mockbukkit.mockbukkit.ServerMock;
 import org.mockbukkit.mockbukkit.entity.PlayerMock;
 
 final class PaperKitLoadoutAdapterTest {
+
+    private static final int PLAYER_STORAGE_SIZE = 36;
+    private static final int PLAYER_ARMOR_SIZE = 4;
+    private static final int PLAYER_EXTRA_SIZE = 1;
 
     @TempDir
     Path tempDir;
@@ -81,7 +87,7 @@ final class PaperKitLoadoutAdapterTest {
         assertTrue(definition.inventory().extra().get(expectedExtra.length - 1) != null);
 
         List<String> effectKeys = definition.potionEffects().stream()
-                .map(effect -> effect.effectKey())
+                .map(KitPotionEffect::effectKey)
                 .sorted()
                 .toList();
         assertEquals(List.of("minecraft:regeneration", "minecraft:speed"), effectKeys);
@@ -185,8 +191,11 @@ final class PaperKitLoadoutAdapterTest {
         KitDefinition malformed = new KitDefinition(
                 new KitId("broken"),
                 "Broken",
-                new io.github.xreatlabz.revprac.domain.kits.KitInventory(
-                        List.of("%%%not-base64%%%"), List.of(), List.of(), 0),
+                new KitInventory(
+                        section(PLAYER_STORAGE_SIZE, Map.of(0, "%%%not-base64%%%")),
+                        emptySection(PLAYER_ARMOR_SIZE),
+                        emptySection(PLAYER_EXTRA_SIZE),
+                        0),
                 List.of(),
                 new KitRules(false, false, true, false),
                 true);
@@ -218,9 +227,9 @@ final class PaperKitLoadoutAdapterTest {
                 new KitId("broken"),
                 "Broken",
                 new KitInventory(
-                        Arrays.asList(encoded(stack(Material.DIAMOND_SWORD, 1)), null),
-                        List.of(encoded(stack(Material.DIAMOND_BOOTS, 1))),
-                        List.of(encoded(stack(Material.TOTEM_OF_UNDYING, 1))),
+                        section(PLAYER_STORAGE_SIZE, Map.of(0, encoded(stack(Material.DIAMOND_SWORD, 1)))),
+                        section(PLAYER_ARMOR_SIZE, Map.of(0, encoded(stack(Material.DIAMOND_BOOTS, 1)))),
+                        section(PLAYER_EXTRA_SIZE, Map.of(0, encoded(stack(Material.TOTEM_OF_UNDYING, 1)))),
                         1),
                 List.of(new KitPotionEffect("minecraft:not_real", 200, 1, false, true, true)),
                 new KitRules(false, false, true, false),
@@ -259,9 +268,9 @@ final class PaperKitLoadoutAdapterTest {
                 new KitId("broken-bytes"),
                 "BrokenBytes",
                 new KitInventory(
-                        List.of(encoded(stack(Material.BOW, 1))),
-                        List.of(encoded(stack(Material.CHAINMAIL_BOOTS, 1))),
-                        List.of(Base64.getEncoder().encodeToString(new byte[] {1, 2, 3, 4})),
+                        section(PLAYER_STORAGE_SIZE, Map.of(0, encoded(stack(Material.BOW, 1)))),
+                        section(PLAYER_ARMOR_SIZE, Map.of(0, encoded(stack(Material.CHAINMAIL_BOOTS, 1)))),
+                        section(PLAYER_EXTRA_SIZE, Map.of(0, Base64.getEncoder().encodeToString(new byte[] {1, 2, 3, 4}))),
                         4),
                 List.of(new KitPotionEffect("minecraft:speed", 100, 0, false, true, true)),
                 new KitRules(false, false, true, false),
@@ -276,6 +285,62 @@ final class PaperKitLoadoutAdapterTest {
         assertArrayEquals(baselineExtra, player.getInventory().getExtraContents());
         assertEquals(2, player.getInventory().getHeldItemSlot());
         assertPotionEffectsEqual(List.of(new PotionEffect(PotionEffectType.REGENERATION, 120, 1, false, true, false)), player);
+    }
+
+    @Test
+    void oversizedLaterSectionLeavesExistingInventoryAndEffectsUnchanged() {
+        ServerMock server = MockBukkit.mock();
+        PlayerMock player = server.addPlayer("apply-player");
+        ItemStack[] baselineStorage = new ItemStack[player.getInventory().getStorageContents().length];
+        baselineStorage[1] = stack(Material.IRON_AXE, 1);
+        player.getInventory().setStorageContents(baselineStorage);
+
+        ItemStack[] baselineArmor = new ItemStack[player.getInventory().getArmorContents().length];
+        baselineArmor[2] = stack(Material.IRON_CHESTPLATE, 1);
+        player.getInventory().setArmorContents(baselineArmor);
+
+        ItemStack[] baselineExtra = new ItemStack[player.getInventory().getExtraContents().length];
+        baselineExtra[0] = stack(Material.SHIELD, 1);
+        player.getInventory().setExtraContents(baselineExtra);
+        player.getInventory().setHeldItemSlot(1);
+        player.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 200, 0, false, true, true));
+
+        List<String> oversizedExtra = new ArrayList<>(section(PLAYER_EXTRA_SIZE, Map.of(0, encoded(stack(Material.TOTEM_OF_UNDYING, 1)))));
+        oversizedExtra.add(encoded(stack(Material.SHIELD, 1)));
+
+        KitDefinition invalid = new KitDefinition(
+                new KitId("oversized-extra"),
+                "OversizedExtra",
+                new KitInventory(
+                        section(PLAYER_STORAGE_SIZE, Map.of(0, encoded(stack(Material.DIAMOND_SWORD, 1)))),
+                        section(PLAYER_ARMOR_SIZE, Map.of(0, encoded(stack(Material.DIAMOND_BOOTS, 1)))),
+                        List.copyOf(oversizedExtra),
+                        3),
+                List.of(new KitPotionEffect("minecraft:speed", 100, 1, false, true, true)),
+                new KitRules(false, false, true, false),
+                true);
+
+        PaperKitLoadoutAdapter adapter = new PaperKitLoadoutAdapter();
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> adapter.apply(player, invalid));
+        assertTrue(exception.getMessage().contains("extra"));
+        assertArrayEquals(baselineStorage, player.getInventory().getStorageContents());
+        assertArrayEquals(baselineArmor, player.getInventory().getArmorContents());
+        assertArrayEquals(baselineExtra, player.getInventory().getExtraContents());
+        assertEquals(1, player.getInventory().getHeldItemSlot());
+        assertPotionEffectsEqual(List.of(new PotionEffect(PotionEffectType.STRENGTH, 200, 0, false, true, true)), player);
+    }
+
+    private static List<String> emptySection(int size) {
+        return section(size, Map.of());
+    }
+
+    private static List<String> section(int size, Map<Integer, String> valuesByIndex) {
+        List<String> values = new ArrayList<>(Collections.nCopies(size, null));
+        for (Map.Entry<Integer, String> entry : valuesByIndex.entrySet()) {
+            values.set(entry.getKey(), entry.getValue());
+        }
+        return Collections.unmodifiableList(new ArrayList<>(values));
     }
 
     private static ItemStack stack(Material material, int amount) {

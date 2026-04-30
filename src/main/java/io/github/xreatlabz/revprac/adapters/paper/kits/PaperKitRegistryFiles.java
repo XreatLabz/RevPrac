@@ -26,6 +26,10 @@ import org.bukkit.potion.PotionEffectType;
 public final class PaperKitRegistryFiles {
 
     private static final String REGISTRY_FILE_NAME = "kits.yml";
+    // Paper and MockBukkit expose player inventory sections as 36 storage slots, 4 armor slots, and 1 offhand slot.
+    private static final int PLAYER_STORAGE_SIZE = 36;
+    private static final int PLAYER_ARMOR_SIZE = 4;
+    private static final int PLAYER_EXTRA_SIZE = 1;
 
     private final Path dataDirectory;
 
@@ -98,11 +102,13 @@ public final class PaperKitRegistryFiles {
     }
 
     private static KitInventory toInventory(Map<?, ?> values, String path) {
-        return new KitInventory(
-                toNullableStringList(requireList(values.get("storage"), path + ".storage"), path + ".storage"),
-                toNullableStringList(requireList(values.get("armor"), path + ".armor"), path + ".armor"),
-                toNullableStringList(requireList(values.get("extra"), path + ".extra"), path + ".extra"),
-                requireInt(values, "selected-slot", path + ".selected-slot"));
+        List<String> storage = toNullableStringList(requireList(values.get("storage"), path + ".storage"), path + ".storage");
+        List<String> armor = toNullableStringList(requireList(values.get("armor"), path + ".armor"), path + ".armor");
+        List<String> extra = toNullableStringList(requireList(values.get("extra"), path + ".extra"), path + ".extra");
+        requireSectionLength(storage, PLAYER_STORAGE_SIZE, path + ".storage");
+        requireSectionLength(armor, PLAYER_ARMOR_SIZE, path + ".armor");
+        requireSectionLength(extra, PLAYER_EXTRA_SIZE, path + ".extra");
+        return new KitInventory(storage, armor, extra, requireInt(values, "selected-slot", path + ".selected-slot"));
     }
 
     private static List<KitPotionEffect> toPotionEffects(List<?> values, String path) {
@@ -207,6 +213,12 @@ public final class PaperKitRegistryFiles {
         PotionEffectType effectType = Registry.EFFECT.get(namespacedKey);
         if (effectType == null) {
             throw new IllegalArgumentException("Unknown potion effect type at " + path + ": " + effectKey);
+        }
+    }
+
+    private static void requireSectionLength(List<String> values, int expectedSize, String path) {
+        if (values.size() != expectedSize) {
+            throw new IllegalArgumentException(path + " must contain exactly " + expectedSize + " entries");
         }
     }
 

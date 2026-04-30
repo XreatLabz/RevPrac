@@ -11,9 +11,12 @@ import io.github.xreatlabz.revprac.domain.kits.KitPotionEffect;
 import io.github.xreatlabz.revprac.domain.kits.KitRules;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
@@ -23,6 +26,10 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockbukkit.mockbukkit.MockBukkit;
 
 final class PaperKitRegistryFilesTest {
+
+    private static final int PLAYER_STORAGE_SIZE = 36;
+    private static final int PLAYER_ARMOR_SIZE = 4;
+    private static final int PLAYER_EXTRA_SIZE = 1;
 
     @TempDir
     Path tempDir;
@@ -55,6 +62,9 @@ final class PaperKitRegistryFilesTest {
         String chestplate = encoded(stack(Material.DIAMOND_CHESTPLATE, 1));
         String helmet = encoded(stack(Material.DIAMOND_HELMET, 1));
         String totem = encoded(stack(Material.TOTEM_OF_UNDYING, 1));
+        List<String> storage = section(PLAYER_STORAGE_SIZE, Map.of(0, sword, 2, apples));
+        List<String> armor = section(PLAYER_ARMOR_SIZE, Map.of(0, boots, 1, leggings, 2, chestplate, 3, helmet));
+        List<String> extra = section(PLAYER_EXTRA_SIZE, Map.of(0, totem));
 
         Files.writeString(
                 tempDir.resolve("kits.yml"),
@@ -66,17 +76,9 @@ final class PaperKitRegistryFilesTest {
                     inventory:
                       selected-slot: 1
                       storage:
-                        - "%s"
-                        - null
-                        - "%s"
-                      armor:
-                        - "%s"
-                        - "%s"
-                        - "%s"
-                        - "%s"
-                      extra:
-                        - "%s"
-                    potion-effects:
+                %s      armor:
+                %s      extra:
+                %s    potion-effects:
                       - effect: minecraft:speed
                         duration-ticks: 1200
                         amplifier: 1
@@ -88,7 +90,7 @@ final class PaperKitRegistryFilesTest {
                       allow-hunger: false
                       allow-natural-regeneration: true
                       ranked: false
-                """.formatted(sword, apples, boots, leggings, chestplate, helmet, totem));
+                """.formatted(yamlList(24, storage), yamlList(24, armor), yamlList(24, extra)));
 
         PaperKitRegistryFiles files = new PaperKitRegistryFiles(tempDir);
 
@@ -98,11 +100,7 @@ final class PaperKitRegistryFilesTest {
                 List.of(new KitDefinition(
                         new KitId("nodebuff"),
                         "NoDebuff",
-                        new KitInventory(
-                                Arrays.asList(sword, null, apples),
-                                List.of(boots, leggings, chestplate, helmet),
-                                List.of(totem),
-                                1),
+                        new KitInventory(storage, armor, extra, 1),
                         List.of(new KitPotionEffect("minecraft:speed", 1200, 1, false, true, true)),
                         new KitRules(false, false, true, false),
                         true)),
@@ -123,6 +121,9 @@ final class PaperKitRegistryFilesTest {
 
     @Test
     void duplicateIdsFailClosed() throws Exception {
+        List<String> firstStorage = section(PLAYER_STORAGE_SIZE, Map.of(0, encoded(stack(Material.STONE_SWORD, 1))));
+        List<String> secondStorage = section(PLAYER_STORAGE_SIZE, Map.of(0, encoded(stack(Material.BOW, 1))));
+
         Files.writeString(
                 tempDir.resolve("kits.yml"),
                 """
@@ -132,10 +133,10 @@ final class PaperKitRegistryFilesTest {
                     enabled: true
                     inventory:
                       selected-slot: 0
-                      storage: ["%s"]
-                      armor: []
-                      extra: []
-                    potion-effects: []
+                      storage:
+                %s      armor:
+                %s      extra:
+                %s    potion-effects: []
                     rules:
                       allow-building: false
                       allow-hunger: false
@@ -146,16 +147,22 @@ final class PaperKitRegistryFilesTest {
                     enabled: false
                     inventory:
                       selected-slot: 0
-                      storage: ["%s"]
-                      armor: []
-                      extra: []
-                    potion-effects: []
+                      storage:
+                %s      armor:
+                %s      extra:
+                %s    potion-effects: []
                     rules:
                       allow-building: false
                       allow-hunger: true
                       allow-natural-regeneration: false
                       ranked: true
-                """.formatted(encoded(stack(Material.STONE_SWORD, 1)), encoded(stack(Material.BOW, 1))));
+                """.formatted(
+                        yamlList(24, firstStorage),
+                        yamlList(24, emptySection(PLAYER_ARMOR_SIZE)),
+                        yamlList(24, emptySection(PLAYER_EXTRA_SIZE)),
+                        yamlList(24, secondStorage),
+                        yamlList(24, emptySection(PLAYER_ARMOR_SIZE)),
+                        yamlList(24, emptySection(PLAYER_EXTRA_SIZE))));
 
         PaperKitRegistryFiles files = new PaperKitRegistryFiles(tempDir);
 
@@ -165,7 +172,8 @@ final class PaperKitRegistryFilesTest {
 
     @Test
     void missingRequiredFieldsIncludeYamlPathInExceptionMessage() throws Exception {
-        String sword = encoded(stack(Material.DIAMOND_SWORD, 1));
+        List<String> storage = section(PLAYER_STORAGE_SIZE, Map.of(0, encoded(stack(Material.DIAMOND_SWORD, 1))));
+
         Files.writeString(
                 tempDir.resolve("kits.yml"),
                 """
@@ -174,16 +182,19 @@ final class PaperKitRegistryFilesTest {
                     display-name: NoDebuff
                     enabled: true
                     inventory:
-                      storage: ["%s"]
-                      armor: []
-                      extra: []
-                    potion-effects: []
+                      storage:
+                %s      armor:
+                %s      extra:
+                %s    potion-effects: []
                     rules:
                       allow-building: false
                       allow-hunger: false
                       allow-natural-regeneration: true
                       ranked: false
-                """.formatted(sword));
+                """.formatted(
+                        yamlList(24, storage),
+                        yamlList(24, emptySection(PLAYER_ARMOR_SIZE)),
+                        yamlList(24, emptySection(PLAYER_EXTRA_SIZE))));
 
         PaperKitRegistryFiles files = new PaperKitRegistryFiles(tempDir);
 
@@ -193,8 +204,10 @@ final class PaperKitRegistryFilesTest {
 
     @Test
     void invalidYamlContentDoesNotPublishPartialDefinitions() throws Exception {
-        String sword = encoded(stack(Material.DIAMOND_SWORD, 1));
-        String bow = encoded(stack(Material.BOW, 1));
+        List<String> storage = section(
+                PLAYER_STORAGE_SIZE,
+                Map.of(0, encoded(stack(Material.DIAMOND_SWORD, 1)), 2, encoded(stack(Material.BOW, 1))));
+
         Files.writeString(
                 tempDir.resolve("kits.yml"),
                 """
@@ -204,10 +217,10 @@ final class PaperKitRegistryFilesTest {
                     enabled: true
                     inventory:
                       selected-slot: 0
-                      storage: ["%s", null, "%s"]
-                      armor: []
-                      extra: []
-                    potion-effects: []
+                      storage:
+                %s      armor:
+                %s      extra:
+                %s    potion-effects: []
                     rules:
                       allow-building: false
                       allow-hunger: false
@@ -215,7 +228,10 @@ final class PaperKitRegistryFilesTest {
                       ranked: false
                   - id: soup
                     enabled: true
-                """.formatted(sword, bow));
+                """.formatted(
+                        yamlList(24, storage),
+                        yamlList(24, emptySection(PLAYER_ARMOR_SIZE)),
+                        yamlList(24, emptySection(PLAYER_EXTRA_SIZE))));
 
         PaperKitRegistryFiles files = new PaperKitRegistryFiles(tempDir);
 
@@ -225,6 +241,8 @@ final class PaperKitRegistryFilesTest {
 
     @Test
     void invalidItemPayloadFailsWithYamlPath() throws Exception {
+        List<String> storage = section(PLAYER_STORAGE_SIZE, Map.of(0, "AQIDBA=="));
+
         Files.writeString(
                 tempDir.resolve("kits.yml"),
                 """
@@ -234,16 +252,19 @@ final class PaperKitRegistryFilesTest {
                     enabled: true
                     inventory:
                       selected-slot: 0
-                      storage: ["AQIDBA=="]
-                      armor: []
-                      extra: []
-                    potion-effects: []
+                      storage:
+                %s      armor:
+                %s      extra:
+                %s    potion-effects: []
                     rules:
                       allow-building: false
                       allow-hunger: false
                       allow-natural-regeneration: true
                       ranked: false
-                """);
+                """.formatted(
+                        yamlList(24, storage),
+                        yamlList(24, emptySection(PLAYER_ARMOR_SIZE)),
+                        yamlList(24, emptySection(PLAYER_EXTRA_SIZE))));
 
         PaperKitRegistryFiles files = new PaperKitRegistryFiles(tempDir);
 
@@ -253,7 +274,8 @@ final class PaperKitRegistryFilesTest {
 
     @Test
     void unknownEffectKeyFailsWithYamlPath() throws Exception {
-        String sword = encoded(stack(Material.DIAMOND_SWORD, 1));
+        List<String> storage = section(PLAYER_STORAGE_SIZE, Map.of(0, encoded(stack(Material.DIAMOND_SWORD, 1))));
+
         Files.writeString(
                 tempDir.resolve("kits.yml"),
                 """
@@ -263,10 +285,10 @@ final class PaperKitRegistryFilesTest {
                     enabled: true
                     inventory:
                       selected-slot: 0
-                      storage: ["%s"]
-                      armor: []
-                      extra: []
-                    potion-effects:
+                      storage:
+                %s      armor:
+                %s      extra:
+                %s    potion-effects:
                       - effect: minecraft:not_real
                         duration-ticks: 1200
                         amplifier: 1
@@ -278,7 +300,10 @@ final class PaperKitRegistryFilesTest {
                       allow-hunger: false
                       allow-natural-regeneration: true
                       ranked: false
-                """.formatted(sword));
+                """.formatted(
+                        yamlList(24, storage),
+                        yamlList(24, emptySection(PLAYER_ARMOR_SIZE)),
+                        yamlList(24, emptySection(PLAYER_EXTRA_SIZE))));
 
         PaperKitRegistryFiles files = new PaperKitRegistryFiles(tempDir);
 
@@ -288,7 +313,8 @@ final class PaperKitRegistryFilesTest {
 
     @Test
     void decimalSelectedSlotFailsWithFieldPath() throws Exception {
-        String sword = encoded(stack(Material.DIAMOND_SWORD, 1));
+        List<String> storage = section(PLAYER_STORAGE_SIZE, Map.of(0, encoded(stack(Material.DIAMOND_SWORD, 1))));
+
         Files.writeString(
                 tempDir.resolve("kits.yml"),
                 """
@@ -298,16 +324,19 @@ final class PaperKitRegistryFilesTest {
                     enabled: true
                     inventory:
                       selected-slot: 1.5
-                      storage: ["%s"]
-                      armor: []
-                      extra: []
-                    potion-effects: []
+                      storage:
+                %s      armor:
+                %s      extra:
+                %s    potion-effects: []
                     rules:
                       allow-building: false
                       allow-hunger: false
                       allow-natural-regeneration: true
                       ranked: false
-                """.formatted(sword));
+                """.formatted(
+                        yamlList(24, storage),
+                        yamlList(24, emptySection(PLAYER_ARMOR_SIZE)),
+                        yamlList(24, emptySection(PLAYER_EXTRA_SIZE))));
 
         PaperKitRegistryFiles files = new PaperKitRegistryFiles(tempDir);
 
@@ -315,25 +344,88 @@ final class PaperKitRegistryFilesTest {
         assertTrue(exception.getMessage().contains("kits[0].inventory.selected-slot"));
     }
 
+    @Test
+    void oversizedSectionFailsWithYamlPath() throws Exception {
+        List<String> oversizedExtra = new ArrayList<>(emptySection(PLAYER_EXTRA_SIZE));
+        oversizedExtra.add(encoded(stack(Material.SHIELD, 1)));
+        List<String> storage = section(PLAYER_STORAGE_SIZE, Map.of(0, encoded(stack(Material.DIAMOND_SWORD, 1))));
+
+        Files.writeString(
+                tempDir.resolve("kits.yml"),
+                """
+                kits:
+                  - id: nodebuff
+                    display-name: NoDebuff
+                    enabled: true
+                    inventory:
+                      selected-slot: 0
+                      storage:
+                %s      armor:
+                %s      extra:
+                %s    potion-effects: []
+                    rules:
+                      allow-building: false
+                      allow-hunger: false
+                      allow-natural-regeneration: true
+                      ranked: false
+                """.formatted(
+                        yamlList(24, storage),
+                        yamlList(24, emptySection(PLAYER_ARMOR_SIZE)),
+                        yamlList(24, oversizedExtra)));
+
+        PaperKitRegistryFiles files = new PaperKitRegistryFiles(tempDir);
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, files::load);
+        assertTrue(exception.getMessage().contains("kits[0].inventory.extra"));
+    }
+
     private static KitDefinition kit(String id, String displayName) {
         return new KitDefinition(
                 new KitId(id),
                 displayName,
                 new KitInventory(
-                        Arrays.asList(
-                                encoded(stack(Material.IRON_SWORD, 1)),
-                                null,
-                                encoded(stack(Material.FISHING_ROD, 1))),
-                        List.of(
-                                encoded(stack(Material.IRON_BOOTS, 1)),
-                                encoded(stack(Material.IRON_LEGGINGS, 1)),
-                                encoded(stack(Material.IRON_CHESTPLATE, 1)),
-                                encoded(stack(Material.IRON_HELMET, 1))),
-                        List.of(encoded(stack(Material.TOTEM_OF_UNDYING, 1))),
+                        section(
+                                PLAYER_STORAGE_SIZE,
+                                Map.of(0, encoded(stack(Material.IRON_SWORD, 1)), 2, encoded(stack(Material.FISHING_ROD, 1)))),
+                        section(
+                                PLAYER_ARMOR_SIZE,
+                                Map.of(
+                                        0, encoded(stack(Material.IRON_BOOTS, 1)),
+                                        1, encoded(stack(Material.IRON_LEGGINGS, 1)),
+                                        2, encoded(stack(Material.IRON_CHESTPLATE, 1)),
+                                        3, encoded(stack(Material.IRON_HELMET, 1)))),
+                        section(PLAYER_EXTRA_SIZE, Map.of(0, encoded(stack(Material.TOTEM_OF_UNDYING, 1)))),
                         2),
                 List.of(new KitPotionEffect("minecraft:speed", 600, 1, false, true, true)),
                 new KitRules(false, false, true, false),
                 true);
+    }
+
+    private static List<String> emptySection(int size) {
+        return section(size, Map.of());
+    }
+
+    private static List<String> section(int size, Map<Integer, String> valuesByIndex) {
+        List<String> values = new ArrayList<>(Collections.nCopies(size, null));
+        for (Map.Entry<Integer, String> entry : valuesByIndex.entrySet()) {
+            values.set(entry.getKey(), entry.getValue());
+        }
+        return Collections.unmodifiableList(new ArrayList<>(values));
+    }
+
+    private static String yamlList(int indent, List<String> values) {
+        String prefix = " ".repeat(indent);
+        StringBuilder builder = new StringBuilder();
+        for (String value : values) {
+            builder.append(prefix).append("- ");
+            if (value == null) {
+                builder.append("null");
+            } else {
+                builder.append('"').append(value).append('"');
+            }
+            builder.append('\n');
+        }
+        return builder.toString();
     }
 
     private static ItemStack stack(Material material, int amount) {
