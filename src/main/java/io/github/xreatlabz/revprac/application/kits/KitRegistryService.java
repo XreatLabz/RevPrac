@@ -26,10 +26,9 @@ public final class KitRegistryService {
 
         mutationLock.lock();
         try {
-            if (kitRegistryRepository.find(kitDefinition.id()).isPresent()) {
+            if (!kitRegistryRepository.create(kitDefinition)) {
                 throw new IllegalArgumentException("Kit already exists: " + kitDefinition.id().value());
             }
-            kitRegistryRepository.save(kitDefinition);
         } finally {
             mutationLock.unlock();
         }

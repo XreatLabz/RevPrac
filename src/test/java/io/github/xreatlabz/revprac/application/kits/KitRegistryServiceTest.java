@@ -66,6 +66,25 @@ final class KitRegistryServiceTest {
     }
 
     @Test
+    void duplicateKitRegistrationCannotOverwriteAcrossServiceInstancesSharingRepository() {
+        ServiceHarness firstHarness = newHarness();
+        ServiceHarness secondHarness = newHarness(firstHarness.repository);
+
+        firstHarness.register(firstHarness.kitDefinition("nodebuff", "NoDebuff", true));
+
+        InvocationTargetException exception = assertThrows(
+                InvocationTargetException.class,
+                () -> secondHarness.registerMethod.invoke(
+                        secondHarness.service, secondHarness.kitDefinition("nodebuff", "Replacement", false)));
+
+        assertInstanceOf(IllegalArgumentException.class, exception.getCause());
+        assertEquals("Kit already exists: nodebuff", exception.getCause().getMessage());
+        assertEquals(
+                "NoDebuff",
+                recordComponentValue(firstHarness.repository.find(firstHarness.kitId("nodebuff")).orElseThrow(), "displayName"));
+    }
+
+    @Test
     void disabledKitsRemainRegisteredButAreExcludedFromEnabledKits() {
         ServiceHarness harness = newHarness();
         harness.register(harness.kitDefinition("nodebuff", "NoDebuff", true));
@@ -112,6 +131,31 @@ final class KitRegistryServiceTest {
         Class<?> serviceType = loadClass(KIT_REGISTRY_SERVICE_TYPE);
 
         RepositoryDouble repository = new RepositoryDouble();
+        return newHarness(repository, kitIdType, kitInventoryType, kitPotionEffectType, kitRulesType, kitDefinitionType,
+                repositoryType, serviceType);
+    }
+
+    private static ServiceHarness newHarness(RepositoryDouble repository) {
+        Class<?> kitIdType = loadClass(KIT_ID_TYPE);
+        Class<?> kitInventoryType = loadClass(KIT_INVENTORY_TYPE);
+        Class<?> kitPotionEffectType = loadClass(KIT_POTION_EFFECT_TYPE);
+        Class<?> kitRulesType = loadClass(KIT_RULES_TYPE);
+        Class<?> kitDefinitionType = loadClass(KIT_DEFINITION_TYPE);
+        Class<?> repositoryType = loadClass(KIT_REGISTRY_REPOSITORY_TYPE);
+        Class<?> serviceType = loadClass(KIT_REGISTRY_SERVICE_TYPE);
+        return newHarness(repository, kitIdType, kitInventoryType, kitPotionEffectType, kitRulesType, kitDefinitionType,
+                repositoryType, serviceType);
+    }
+
+    private static ServiceHarness newHarness(
+            RepositoryDouble repository,
+            Class<?> kitIdType,
+            Class<?> kitInventoryType,
+            Class<?> kitPotionEffectType,
+            Class<?> kitRulesType,
+            Class<?> kitDefinitionType,
+            Class<?> repositoryType,
+            Class<?> serviceType) {
         Object repositoryProxy = Proxy.newProxyInstance(
                 repositoryType.getClassLoader(), new Class<?>[] {repositoryType}, repository);
 
@@ -145,9 +189,13 @@ final class KitRegistryServiceTest {
             Method enabledKitsMethod,
             RepositoryDouble repository) {
 
+        Object kitId(String value) {
+            return instantiateRecord(kitIdType, Map.of("value", value));
+        }
+
         Object kitDefinition(String id, String displayName, boolean enabled) {
             Map<String, Object> values = new LinkedHashMap<>();
-            values.put("id", instantiateRecord(kitIdType, Map.of("value", id)));
+            values.put("id", kitId(id));
             values.put("displayName", displayName);
             values.put("inventory", instantiateRecord(kitInventoryType, Map.of(
                     "storage", Arrays.asList("item-" + id, null, "rod-" + id),
@@ -199,14 +247,17 @@ final class KitRegistryServiceTest {
 
         private final Map<Object, Object> definitions = new ConcurrentHashMap<>();
 
+        private Optional<Object> find(Object kitId) {
+            return Optional.ofNullable(definitions.get(kitId));
+        }
+
         @Override
         public Object invoke(Object proxy, Method method, Object[] arguments) {
             return switch (method.getName()) {
-                case "find" -> Optional.ofNullable(definitions.get(arguments[0]));
-                case "save" -> {
+                case "find" -> find(arguments[0]);
+                case "create" -> {
                     Object kitDefinition = arguments[0];
-                    definitions.put(recordComponentValue(kitDefinition, "id"), kitDefinition);
-                    yield null;
+                    yield definitions.putIfAbsent(recordComponentValue(kitDefinition, "id"), kitDefinition) == null;
                 }
                 case "findAll" -> List.copyOf(definitions.values());
                 default -> throw new UnsupportedOperationException("Unexpected repository method: " + method.getName());

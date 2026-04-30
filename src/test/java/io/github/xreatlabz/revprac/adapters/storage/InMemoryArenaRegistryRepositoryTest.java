@@ -5,6 +5,7 @@ import static io.github.xreatlabz.revprac.ContractTestSupport.instantiateRecord;
 import static io.github.xreatlabz.revprac.ContractTestSupport.loadClass;
 import static io.github.xreatlabz.revprac.ContractTestSupport.recordComponentValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -28,33 +29,41 @@ final class InMemoryArenaRegistryRepositoryTest {
             "io.github.xreatlabz.revprac.adapters.storage.InMemoryArenaRegistryRepository";
 
     @Test
-    void repositoryStoresFindsAndReplacesArenasById() {
+    void repositoryCreateStoresAndFindsArenaById() {
+        RepositoryHarness harness = newHarness();
+        Object original = harness.arenaDefinition("bridge", "Bridge", true);
+
+        assertTrue(harness.create(original), "First create should store the arena");
+        Optional<?> stored = harness.find("bridge");
+        assertTrue(stored.isPresent(), "Repository should find the stored arena");
+        assertEquals("Bridge", recordComponentValue(stored.get(), "displayName"));
+    }
+
+    @Test
+    void repositoryCreateDoesNotOverwriteExistingArenaDefinition() {
         RepositoryHarness harness = newHarness();
         Object original = harness.arenaDefinition("bridge", "Bridge", true);
         Object replacement = harness.arenaDefinition("bridge", "Bridge II", false);
 
-        harness.save(original);
-        Optional<?> stored = harness.find("bridge");
-        assertTrue(stored.isPresent(), "Repository should find the stored arena");
-        assertEquals("Bridge", recordComponentValue(stored.get(), "displayName"));
+        assertTrue(harness.create(original), "First create should succeed");
+        assertFalse(harness.create(replacement), "Second create should fail for duplicate ids");
 
-        harness.save(replacement);
-        Optional<?> updated = harness.find("bridge");
-        assertTrue(updated.isPresent(), "Repository should replace existing arena for the same id");
-        assertEquals("Bridge II", recordComponentValue(updated.get(), "displayName"));
-        assertEquals(false, recordComponentValue(updated.get(), "enabled"));
+        Optional<?> stored = harness.find("bridge");
+        assertTrue(stored.isPresent(), "Repository should still contain the original arena");
+        assertEquals("Bridge", recordComponentValue(stored.get(), "displayName"));
+        assertEquals(true, recordComponentValue(stored.get(), "enabled"));
     }
 
     @Test
     void repositoryFindAllReturnsImmutableSnapshots() {
         RepositoryHarness harness = newHarness();
-        harness.save(harness.arenaDefinition("bridge", "Bridge", true));
+        assertTrue(harness.create(harness.arenaDefinition("bridge", "Bridge", true)));
 
         Collection<?> firstSnapshot = harness.findAll();
         assertEquals(1, firstSnapshot.size(), "Initial snapshot should contain the first arena");
         assertThrows(UnsupportedOperationException.class, firstSnapshot::clear);
 
-        harness.save(harness.arenaDefinition("courtyard", "Courtyard", true));
+        assertTrue(harness.create(harness.arenaDefinition("courtyard", "Courtyard", true)));
 
         assertEquals(1, firstSnapshot.size(), "Earlier snapshot should not change after later saves");
         assertEquals(List.of("bridge", "courtyard"), harness.findAll().stream()
@@ -78,7 +87,7 @@ final class InMemoryArenaRegistryRepositoryTest {
                     arenaCuboidType,
                     arenaSpawnPointType,
                     arenaDefinitionType,
-                    repositoryType.getMethod("save", arenaDefinitionType),
+                    repositoryType.getMethod("create", arenaDefinitionType),
                     repositoryType.getMethod("find", arenaIdType),
                     repositoryType.getMethod("findAll"));
         } catch (ReflectiveOperationException exception) {
@@ -92,7 +101,7 @@ final class InMemoryArenaRegistryRepositoryTest {
             Class<?> arenaCuboidType,
             Class<?> arenaSpawnPointType,
             Class<?> arenaDefinitionType,
-            Method saveMethod,
+            Method createMethod,
             Method findMethod,
             Method findAllMethod) {
 
@@ -112,11 +121,11 @@ final class InMemoryArenaRegistryRepositoryTest {
             return instantiateRecord(arenaDefinitionType, values);
         }
 
-        void save(Object arenaDefinition) {
+        boolean create(Object arenaDefinition) {
             try {
-                saveMethod.invoke(repository, arenaDefinition);
+                return (boolean) createMethod.invoke(repository, arenaDefinition);
             } catch (ReflectiveOperationException exception) {
-                throw new AssertionError("Could not save arena definition", exception);
+                throw new AssertionError("Could not create arena definition", exception);
             }
         }
 

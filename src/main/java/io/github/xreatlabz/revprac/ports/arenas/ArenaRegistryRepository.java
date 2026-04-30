@@ -9,7 +9,7 @@ public interface ArenaRegistryRepository {
 
     Optional<ArenaDefinition> find(ArenaId arenaId);
 
-    void save(ArenaDefinition arenaDefinition);
+    boolean create(ArenaDefinition arenaDefinition);
 
     Collection<ArenaDefinition> findAll();
 }

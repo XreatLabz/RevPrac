@@ -78,6 +78,25 @@ final class ArenaRegistryServiceTest {
     }
 
     @Test
+    void duplicateArenaRegistrationCannotOverwriteAcrossServiceInstancesSharingRepository() {
+        ServiceHarness firstHarness = newHarness();
+        ServiceHarness secondHarness = newHarness(firstHarness.repository);
+
+        firstHarness.register(firstHarness.arenaDefinition("bridge", "Bridge", true));
+
+        InvocationTargetException exception = assertThrows(
+                InvocationTargetException.class,
+                () -> secondHarness.registerMethod.invoke(
+                        secondHarness.service, secondHarness.arenaDefinition("bridge", "Bridge Replacement", false)));
+
+        assertInstanceOf(IllegalArgumentException.class, exception.getCause());
+        assertEquals("Arena already exists: bridge", exception.getCause().getMessage());
+        assertEquals(
+                "Bridge",
+                recordComponentValue(firstHarness.repository.find(firstHarness.arenaId("bridge")).orElseThrow(), "displayName"));
+    }
+
+    @Test
     void disabledArenasCannotBeReserved() {
         ServiceHarness harness = newHarness();
         Object arena = harness.arenaDefinition("bridge", "Bridge", false);
@@ -116,6 +135,25 @@ final class ArenaRegistryServiceTest {
 
         assertEquals(1, harness.resetPort.resetCalls.size(), "Release should call reset exactly once");
         assertSame(arena, harness.resetPort.resetCalls.getFirst());
+
+        Object nextReservation = harness.reserve("bridge", "match:queue-2");
+        assertEquals("match:queue-2", recordComponentValue(nextReservation, "ownerKey"));
+    }
+
+    @Test
+    void resetFailureDoesNotWedgeArenaReservationState() {
+        ServiceHarness harness = newHarness();
+        harness.resetPort.throwOnReset = new IllegalStateException("reset failed");
+        Object arena = harness.arenaDefinition("bridge", "Bridge", true);
+        harness.register(arena);
+
+        Object reservation = harness.reserve("bridge", "match:queue-1");
+        RuntimeException exception =
+                assertThrows(RuntimeException.class, () -> harness.release(recordComponentValue(reservation, "reservationId")));
+
+        assertInstanceOf(IllegalStateException.class, exception);
+        assertEquals("reset failed", exception.getMessage());
+        assertEquals(1, harness.resetPort.resetCalls.size(), "Release should still attempt reset once");
 
         Object nextReservation = harness.reserve("bridge", "match:queue-2");
         assertEquals("match:queue-2", recordComponentValue(nextReservation, "ownerKey"));
@@ -222,6 +260,35 @@ final class ArenaRegistryServiceTest {
         Class<?> serviceType = loadClass(ARENA_REGISTRY_SERVICE_TYPE);
 
         RepositoryDouble repository = new RepositoryDouble(arenaIdType);
+        return newHarness(repository, arenaIdType, arenaCuboidType, arenaSpawnPointType, arenaDefinitionType, arenaReservationType,
+                arenaReservationIdType, repositoryType, resetPortType, serviceType);
+    }
+
+    private static ServiceHarness newHarness(RepositoryDouble repository) {
+        Class<?> arenaIdType = loadClass(ARENA_ID_TYPE);
+        Class<?> arenaCuboidType = loadClass(ARENA_CUBOID_TYPE);
+        Class<?> arenaSpawnPointType = loadClass(ARENA_SPAWN_POINT_TYPE);
+        Class<?> arenaDefinitionType = loadClass(ARENA_DEFINITION_TYPE);
+        Class<?> arenaReservationType = loadClass(ARENA_RESERVATION_TYPE);
+        Class<?> arenaReservationIdType = loadClass(ARENA_RESERVATION_ID_TYPE);
+        Class<?> repositoryType = loadClass(ARENA_REGISTRY_REPOSITORY_TYPE);
+        Class<?> resetPortType = loadClass(ARENA_RESET_PORT_TYPE);
+        Class<?> serviceType = loadClass(ARENA_REGISTRY_SERVICE_TYPE);
+        return newHarness(repository, arenaIdType, arenaCuboidType, arenaSpawnPointType, arenaDefinitionType, arenaReservationType,
+                arenaReservationIdType, repositoryType, resetPortType, serviceType);
+    }
+
+    private static ServiceHarness newHarness(
+            RepositoryDouble repository,
+            Class<?> arenaIdType,
+            Class<?> arenaCuboidType,
+            Class<?> arenaSpawnPointType,
+            Class<?> arenaDefinitionType,
+            Class<?> arenaReservationType,
+            Class<?> arenaReservationIdType,
+            Class<?> repositoryType,
+            Class<?> resetPortType,
+            Class<?> serviceType) {
         ResetPortDouble resetPort = new ResetPortDouble();
         Object repositoryProxy = Proxy.newProxyInstance(
                 repositoryType.getClassLoader(), new Class<?>[] {repositoryType}, repository);
@@ -344,7 +411,12 @@ final class ArenaRegistryServiceTest {
         void release(Object reservationId) {
             try {
                 releaseMethod.invoke(service, reservationId);
-            } catch (IllegalAccessException | InvocationTargetException exception) {
+            } catch (IllegalAccessException exception) {
+                throw new AssertionError("Could not release arena reservation", exception);
+            } catch (InvocationTargetException exception) {
+                if (exception.getCause() instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
                 throw new AssertionError("Could not release arena reservation", exception);
             }
         }
@@ -359,14 +431,17 @@ final class ArenaRegistryServiceTest {
             this.arenaIdType = arenaIdType;
         }
 
+        private Optional<Object> find(Object arenaId) {
+            return Optional.ofNullable(definitions.get(arenaId));
+        }
+
         @Override
         public Object invoke(Object proxy, Method method, Object[] arguments) {
             return switch (method.getName()) {
-                case "find" -> Optional.ofNullable(definitions.get(arguments[0]));
-                case "save" -> {
+                case "find" -> find(arguments[0]);
+                case "create" -> {
                     Object arenaDefinition = arguments[0];
-                    definitions.put(recordComponentValue(arenaDefinition, "id"), arenaDefinition);
-                    yield null;
+                    yield definitions.putIfAbsent(recordComponentValue(arenaDefinition, "id"), arenaDefinition) == null;
                 }
                 case "findAll" -> List.copyOf(definitions.values());
                 default -> throw new UnsupportedOperationException("Unexpected repository method: " + method.getName());
@@ -377,6 +452,7 @@ final class ArenaRegistryServiceTest {
     private static final class ResetPortDouble implements InvocationHandler {
 
         private final List<Object> resetCalls = new ArrayList<>();
+        private RuntimeException throwOnReset;
 
         @Override
         public Object invoke(Object proxy, Method method, Object[] arguments) {
@@ -384,6 +460,9 @@ final class ArenaRegistryServiceTest {
                 throw new UnsupportedOperationException("Unexpected reset port method: " + method.getName());
             }
             resetCalls.add(arguments[0]);
+            if (throwOnReset != null) {
+                throw throwOnReset;
+            }
             return null;
         }
     }

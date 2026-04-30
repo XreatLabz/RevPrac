@@ -38,10 +38,9 @@ public final class ArenaRegistryService {
         mutationLock.lock();
         try {
             ArenaId arenaId = arenaDefinition.id();
-            if (arenaRegistryRepository.find(arenaId).isPresent()) {
+            if (!arenaRegistryRepository.create(arenaDefinition)) {
                 throw new IllegalArgumentException("Arena already exists: " + arenaId.value());
             }
-            arenaRegistryRepository.save(arenaDefinition);
         } finally {
             mutationLock.unlock();
         }
@@ -80,22 +79,22 @@ public final class ArenaRegistryService {
     public void release(ArenaReservationId reservationId) {
         Objects.requireNonNull(reservationId, "reservationId");
 
+        ArenaDefinition arenaDefinitionToReset;
         mutationLock.lock();
         try {
-            ArenaReservation reservation = activeReservations.get(reservationId);
+            ArenaReservation reservation = activeReservations.remove(reservationId);
             if (reservation == null) {
                 throw new IllegalStateException("Unknown reservation: " + reservationId.value());
             }
 
-            ArenaDefinition arenaDefinition = arenaRegistryRepository.find(reservation.arenaId())
+            arenaDefinitionToReset = arenaRegistryRepository.find(reservation.arenaId())
                     .orElseThrow(() -> new IllegalStateException(
                             "Arena is not registered: " + reservation.arenaId().value()));
-
-            arenaResetPort.reset(arenaDefinition);
-            activeReservations.remove(reservationId);
             reservationsByArenaId.remove(reservation.arenaId());
         } finally {
             mutationLock.unlock();
         }
+
+        arenaResetPort.reset(arenaDefinitionToReset);
     }
 }

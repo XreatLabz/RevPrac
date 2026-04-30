@@ -21,9 +21,9 @@ public final class InMemoryKitRegistryRepository implements KitRegistryRepositor
     }
 
     @Override
-    public void save(KitDefinition kitDefinition) {
+    public boolean create(KitDefinition kitDefinition) {
         Objects.requireNonNull(kitDefinition, "kitDefinition");
-        kits.put(kitDefinition.id(), kitDefinition);
+        return kits.putIfAbsent(kitDefinition.id(), kitDefinition) == null;
     }
 
     @Override

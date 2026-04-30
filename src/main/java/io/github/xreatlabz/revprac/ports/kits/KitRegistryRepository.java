@@ -9,7 +9,7 @@ public interface KitRegistryRepository {
 
     Optional<KitDefinition> find(KitId kitId);
 
-    void save(KitDefinition kitDefinition);
+    boolean create(KitDefinition kitDefinition);
 
     Collection<KitDefinition> findAll();
 }

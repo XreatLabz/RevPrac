@@ -21,9 +21,9 @@ public final class InMemoryArenaRegistryRepository implements ArenaRegistryRepos
     }
 
     @Override
-    public void save(ArenaDefinition arenaDefinition) {
+    public boolean create(ArenaDefinition arenaDefinition) {
         Objects.requireNonNull(arenaDefinition, "arenaDefinition");
-        arenas.put(arenaDefinition.id(), arenaDefinition);
+        return arenas.putIfAbsent(arenaDefinition.id(), arenaDefinition) == null;
     }
 
     @Override

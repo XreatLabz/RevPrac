@@ -5,6 +5,7 @@ import static io.github.xreatlabz.revprac.ContractTestSupport.instantiateRecord;
 import static io.github.xreatlabz.revprac.ContractTestSupport.loadClass;
 import static io.github.xreatlabz.revprac.ContractTestSupport.recordComponentValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,33 +31,41 @@ final class InMemoryKitRegistryRepositoryTest {
             "io.github.xreatlabz.revprac.adapters.storage.InMemoryKitRegistryRepository";
 
     @Test
-    void repositoryStoresFindsAndReplacesKitsById() {
+    void repositoryCreateStoresAndFindsKitById() {
+        RepositoryHarness harness = newHarness();
+        Object original = harness.kitDefinition("nodebuff", "NoDebuff", true);
+
+        assertTrue(harness.create(original), "First create should store the kit");
+        Optional<?> stored = harness.find("nodebuff");
+        assertTrue(stored.isPresent(), "Repository should find the stored kit");
+        assertEquals("NoDebuff", recordComponentValue(stored.get(), "displayName"));
+    }
+
+    @Test
+    void repositoryCreateDoesNotOverwriteExistingKitDefinition() {
         RepositoryHarness harness = newHarness();
         Object original = harness.kitDefinition("nodebuff", "NoDebuff", true);
         Object replacement = harness.kitDefinition("nodebuff", "NoDebuff II", false);
 
-        harness.save(original);
-        Optional<?> stored = harness.find("nodebuff");
-        assertTrue(stored.isPresent(), "Repository should find the stored kit");
-        assertEquals("NoDebuff", recordComponentValue(stored.get(), "displayName"));
+        assertTrue(harness.create(original), "First create should succeed");
+        assertFalse(harness.create(replacement), "Second create should fail for duplicate ids");
 
-        harness.save(replacement);
-        Optional<?> updated = harness.find("nodebuff");
-        assertTrue(updated.isPresent(), "Repository should replace existing kit for the same id");
-        assertEquals("NoDebuff II", recordComponentValue(updated.get(), "displayName"));
-        assertEquals(false, recordComponentValue(updated.get(), "enabled"));
+        Optional<?> stored = harness.find("nodebuff");
+        assertTrue(stored.isPresent(), "Repository should still contain the original kit");
+        assertEquals("NoDebuff", recordComponentValue(stored.get(), "displayName"));
+        assertEquals(true, recordComponentValue(stored.get(), "enabled"));
     }
 
     @Test
     void repositoryFindAllReturnsImmutableSnapshots() {
         RepositoryHarness harness = newHarness();
-        harness.save(harness.kitDefinition("nodebuff", "NoDebuff", true));
+        assertTrue(harness.create(harness.kitDefinition("nodebuff", "NoDebuff", true)));
 
         Collection<?> firstSnapshot = harness.findAll();
         assertEquals(1, firstSnapshot.size(), "Initial snapshot should contain the first kit");
         assertThrows(UnsupportedOperationException.class, firstSnapshot::clear);
 
-        harness.save(harness.kitDefinition("boxing", "Boxing", false));
+        assertTrue(harness.create(harness.kitDefinition("boxing", "Boxing", false)));
 
         assertEquals(1, firstSnapshot.size(), "Earlier snapshot should not change after later saves");
         assertEquals(List.of("boxing", "nodebuff"), harness.findAll().stream()
@@ -82,7 +91,7 @@ final class InMemoryKitRegistryRepositoryTest {
                     kitPotionEffectType,
                     kitRulesType,
                     kitDefinitionType,
-                    repositoryType.getMethod("save", kitDefinitionType),
+                    repositoryType.getMethod("create", kitDefinitionType),
                     repositoryType.getMethod("find", kitIdType),
                     repositoryType.getMethod("findAll"));
         } catch (ReflectiveOperationException exception) {
@@ -97,7 +106,7 @@ final class InMemoryKitRegistryRepositoryTest {
             Class<?> kitPotionEffectType,
             Class<?> kitRulesType,
             Class<?> kitDefinitionType,
-            Method saveMethod,
+            Method createMethod,
             Method findMethod,
             Method findAllMethod) {
 
@@ -126,11 +135,11 @@ final class InMemoryKitRegistryRepositoryTest {
             return instantiateRecord(kitDefinitionType, values);
         }
 
-        void save(Object kitDefinition) {
+        boolean create(Object kitDefinition) {
             try {
-                saveMethod.invoke(repository, kitDefinition);
+                return (boolean) createMethod.invoke(repository, kitDefinition);
             } catch (ReflectiveOperationException exception) {
-                throw new AssertionError("Could not save kit definition", exception);
+                throw new AssertionError("Could not create kit definition", exception);
             }
         }
 
