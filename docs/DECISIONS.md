@@ -41,3 +41,10 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: Do not add `paperweight-userdev`, Shadow, NMS, databases, commands, or practice feature modules in the base scaffold.
 - Decision: Verify the base with JUnit Jupiter, MockBukkit, Spotless, JaCoCo report generation, and a real Paper 1.21.11 smoke boot.
 - Rationale: The project needs a small, verifiable runtime base before feature work, while keeping internals and packaging complexity out until a documented feature requires them.
+
+## 2026-04-30: Phase 1 Bootstrap Config Boundary
+
+- Decision: Keep the Phase 1 bootstrap path on standard `plugin.yml` plus a bundled `config.yml` resource.
+- Decision: Keep the plugin constructor side-effect free and perform bootstrap/config wiring in lifecycle methods, with config save and validation in `onEnable()`.
+- Decision: Treat `paper-plugin.yml` as experimental and out of scope for this slice.
+- Rationale: PaperMC docs keep `plugin.yml` as the stable main-class entrypoint, recommend avoiding constructor work, and expose config through `JavaPlugin#getConfig()` after the resource has been saved.
