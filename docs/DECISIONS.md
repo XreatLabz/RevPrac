@@ -25,3 +25,12 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: `AGENTS.md` is a short map, and `docs/` is the source of truth.
 - Decision: Meaningful project decisions and behavior changes must update documentation.
 - Rationale: Agent-first development works best when context is repository-local, concise, inspectable, and verifiable.
+
+## 2026-04-30: Scaffold API-Only Paper Base
+
+- Decision: Scaffold RevPrac as an API-only Paper plugin targeting Paper/Minecraft `1.21.11`.
+- Decision: Use Gradle Wrapper `9.5.0`, Kotlin DSL, Java 21 toolchain, and `io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT`.
+- Decision: Use standard `plugin.yml`, not experimental `paper-plugin.yml`.
+- Decision: Do not add `paperweight-userdev`, Shadow, NMS, databases, commands, or practice feature modules in the base scaffold.
+- Decision: Verify the base with JUnit Jupiter, MockBukkit, Spotless, JaCoCo report generation, and a real Paper 1.21.11 smoke boot.
+- Rationale: The project needs a small, verifiable runtime base before feature work, while keeping internals and packaging complexity out until a documented feature requires them.

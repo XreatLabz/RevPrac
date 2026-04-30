@@ -6,6 +6,7 @@ This directory is the source of truth for RevPrac. `AGENTS.md` should stay short
 
 - `PRODUCT.md`: product vision, audience, feature direction, and current non-goals.
 - `ARCHITECTURE.md`: planned domain boundaries and dependency direction.
+- `BUILDING.md`: local build, test, smoke, CI, and dependency update workflow.
 - `HARNESS_ENGINEERING.md`: how this repository adopts agent-first harness engineering.
 - `DECISIONS.md`: accepted project decisions and defaults.
 
@@ -18,4 +19,4 @@ This directory is the source of truth for RevPrac. `AGENTS.md` should stay short
 
 ## Current State
 
-RevPrac is in a docs-only bootstrap state. No plugin source, build system, CI, or runtime harness has been scaffolded yet.
+RevPrac now has a minimal Paper 1.21.11 plugin scaffold with Gradle, tests, CI, and a real Paper smoke harness. No arena, kit, queue, match, command, storage, or player-stat feature modules exist yet.

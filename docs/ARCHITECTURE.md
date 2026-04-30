@@ -1,13 +1,23 @@
-# Planned Architecture
+# Architecture
 
-RevPrac has no plugin implementation yet. This page records the initial domain map so future code can grow with clear boundaries.
+RevPrac currently has a minimal Paper plugin scaffold. This page records the active platform choices and the domain map future code should grow into.
 
 ## Target Platform
 
-- Modern Paper 1.21.
-- Java plugin entrypoint when scaffolding begins.
+- Paper/Minecraft 1.21.11.
+- Java 21 toolchain and runtime floor.
+- API-only Paper dependency: `io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT`.
+- Standard Bukkit/Paper `plugin.yml`; do not use experimental `paper-plugin.yml` yet.
 - Official PaperMC documentation is the primary source for setup and API usage.
 - Avoid server internals unless a documented feature requires them.
+
+## Current Scaffold
+
+- Build: Gradle 9.5.0 wrapper with Kotlin DSL.
+- Entrypoint: `io.github.xreatlabz.revprac.RevPracPlugin`.
+- Metadata: `src/main/resources/plugin.yml`.
+- Tests: JUnit Jupiter and MockBukkit for plugin load/enable.
+- Runtime check: `scripts/smoke-run-paper.sh` boots a real Paper 1.21.11 server and confirms RevPrac enables.
 
 ## Planned Domains
 
@@ -27,6 +37,6 @@ RevPrac has no plugin implementation yet. This page records the initial domain m
 - Keep runtime integrations explicit rather than hidden behind global lookups.
 - Add tests around domain decisions before relying on live server behavior.
 
-## Future Scaffold Notes
+## Next Architecture Step
 
-The first code scaffold should introduce only the smallest useful Paper plugin shell: build files, plugin metadata, a main plugin class, a startup verification path, and tests for non-server domain code.
+The next code should introduce the first plain Java domain service before adding commands or Paper event handlers. Keep practice logic testable without a live server, and use Paper adapters only at runtime boundaries.

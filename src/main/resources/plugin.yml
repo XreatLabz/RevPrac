@@ -1,0 +1,7 @@
+name: RevPrac
+version: '${version}'
+main: io.github.xreatlabz.revprac.RevPracPlugin
+description: Minecraft practice core plugin for Modern Paper 1.21.11.
+authors: [XreatLabz]
+website: https://github.com/XreatLabz/RevPrac
+api-version: '1.21.11'

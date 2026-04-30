@@ -1,0 +1,17 @@
+[versions]
+paper = "1.21.11-R0.1-SNAPSHOT"
+junit = "6.0.3"
+mockbukkit = "4.108.0"
+jacoco = "0.8.14"
+run-paper = "3.0.2"
+spotless = "8.4.0"
+
+[libraries]
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit" }
+mockbukkit = { module = "org.mockbukkit.mockbukkit:mockbukkit-v1.21", version.ref = "mockbukkit" }
+paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper" }
+
+[plugins]
+run-paper = { id = "xyz.jpenilla.run-paper", version.ref = "run-paper" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
