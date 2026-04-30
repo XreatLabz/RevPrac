@@ -133,13 +133,28 @@ Validation:
 
 ### Phase 2: Player Session Safety
 
-Status: Planned
+Status: Implemented
 
 Goal:
 
 - add a player context model for `LOBBY`, `QUEUE`, `MATCH`, `SPECTATOR`, and `EDITOR`
 - implement inventory, location, and state snapshots
 - recover cleanly on join, quit, and plugin disable
+
+Implemented scope:
+
+- plain Java `domain.players` contracts for player IDs, contexts, immutable snapshots, pending restorations, sessions, and transition policy
+- plain Java `application.players.PlayerSessionService` for join, quit, managed-context transitions, lobby return, duplicate-join handling, pending restoration, and shutdown recovery
+- in-memory player-session and pending-restoration repositories
+- Paper adapter/listener wiring for online player capture, restore, deferred post-join handling, already-online player initialization, quit handling, and disable-time restoration
+- bootstrap/runtime wiring so `onDisable()` closes intake and drains online managed sessions before runtime shutdown completes
+
+Phase boundary:
+
+- pending restorations are in memory only; durable restart or crash recovery is deferred to Phase 6 persistence
+- join restore is scheduled one tick after `PlayerJoinEvent` to avoid teleporting during the join event
+- disable-time restore uses synchronous Paper restore operations for currently online players
+- inventory snapshots include cursor state; restore closes open inventories, validates the target location before inventory mutation, and then reapplies inventory state
 
 Exit criteria:
 
@@ -150,7 +165,9 @@ Exit criteria:
 Validation:
 
 ```bash
-./gradlew test
+./gradlew test --tests '*PlayerContextContractTest' --tests '*PlayerSnapshotContractTest' --tests '*PlayerSessionTransitionPolicyTest'
+./gradlew test --tests '*PlayerSessionServiceTest' --tests '*InMemoryPlayerSessionRepositoryTest' --tests '*InMemoryPendingRestorationRepositoryTest'
+./gradlew test --tests '*PaperPlayerStateAdapterTest' --tests '*PaperPlayerSessionListenerTest' --tests '*RevPracPluginSessionSafetyTest'
 ./gradlew spotlessCheck test jacocoTestReport jar
 ./scripts/smoke-run-paper.sh
 ```

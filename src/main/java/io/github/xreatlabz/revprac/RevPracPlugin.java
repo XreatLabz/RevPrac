@@ -4,6 +4,7 @@ import io.github.xreatlabz.revprac.application.result.Ok;
 import io.github.xreatlabz.revprac.application.result.Result;
 import io.github.xreatlabz.revprac.bootstrap.BootstrapRuntime;
 import io.github.xreatlabz.revprac.bootstrap.RevPracBootstrap;
+import java.util.logging.Level;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public class RevPracPlugin extends JavaPlugin {
@@ -23,8 +24,13 @@ public class RevPracPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         if (runtime != null) {
-            runtime.shutdown();
-            runtime = null;
+            try {
+                runtime.shutdown();
+            } catch (RuntimeException exception) {
+                getLogger().log(Level.SEVERE, "RevPrac player-session shutdown failed.", exception);
+            } finally {
+                runtime = null;
+            }
         }
         getLogger().info("RevPrac disabled.");
     }

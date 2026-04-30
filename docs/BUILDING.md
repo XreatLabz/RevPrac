@@ -44,6 +44,24 @@ rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java
 
 The import check should only report `RevPracPlugin`, `bootstrap` if unavoidable, and `adapters.paper`. It should not report `application` or `ports` packages.
 
+## Phase 2 Player Session Safety
+
+For player-session work, run the focused pure-domain, application-service, storage, Paper-adapter, and plugin lifecycle tests before the full gate:
+
+```bash
+./gradlew test --tests '*PlayerContextContractTest' --tests '*PlayerSnapshotContractTest' --tests '*PlayerSessionTransitionPolicyTest'
+./gradlew test --tests '*PlayerSessionServiceTest' --tests '*InMemoryPlayerSessionRepositoryTest' --tests '*InMemoryPendingRestorationRepositoryTest'
+./gradlew test --tests '*PaperPlayerStateAdapterTest' --tests '*PaperPlayerSessionListenerTest' --tests '*RevPracPluginSessionSafetyTest'
+```
+
+Boundary checks:
+
+```bash
+rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java/io/github/xreatlabz/revprac/application src/main/java/io/github/xreatlabz/revprac/domain src/main/java/io/github/xreatlabz/revprac/ports
+```
+
+The import check should return no matches. Paper player snapshot and event behavior belongs under `adapters.paper.players`; in-memory session storage belongs under `adapters.storage`.
+
 ## Dependency Updates
 
 Dependency versions live in `gradle/libs.versions.toml`.

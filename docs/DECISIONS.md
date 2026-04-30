@@ -48,3 +48,15 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: Keep the plugin constructor side-effect free and perform bootstrap/config wiring in lifecycle methods, with config save and validation in `onEnable()`.
 - Decision: Treat `paper-plugin.yml` as experimental and out of scope for this slice.
 - Rationale: PaperMC docs keep `plugin.yml` as the stable main-class entrypoint, recommend avoiding constructor work, and expose config through `JavaPlugin#getConfig()` after the resource has been saved.
+
+## 2026-04-30: Phase 2 Player Session Safety Boundary
+
+- Decision: Model player safety with plain Java `domain.players` session and snapshot contracts plus `application.players.PlayerSessionService`.
+- Decision: Keep Paper/Bukkit player capture, restore, and join/quit events in `adapters.paper.players`.
+- Decision: Capture the baseline snapshot once on first transition from `LOBBY` into a managed context and preserve it across managed-context transitions until restoration.
+- Decision: Defer Paper join restoration to the next server tick so no teleport or restore path runs directly inside `PlayerJoinEvent`.
+- Decision: Include inventory cursor state in Phase 2 snapshots and close open inventories before Paper restore reapplies baseline inventory.
+- Decision: Schedule player-session initialization for players already online when the plugin enables.
+- Decision: Use in-memory active session and pending restoration repositories for Phase 2; durable restart/crash recovery is deferred to Phase 6 persistence.
+- Decision: Let `BootstrapRuntime.shutdown()` close intake and restore online managed players through `PlayerSessionService.shutdownAll()` before marking runtime shutdown complete.
+- Rationale: Phase 2 needs interruption safety before arenas, kits, and matches exist, but adding durable storage before the persistence phase would broaden the dependency surface too early.
