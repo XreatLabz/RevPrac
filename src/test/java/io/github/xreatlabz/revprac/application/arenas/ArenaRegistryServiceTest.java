@@ -141,6 +141,39 @@ final class ArenaRegistryServiceTest {
     }
 
     @Test
+    void reserveFailsWhileArenaResetIsStillRunningAndSucceedsAfterResetCompletes() throws Exception {
+        ServiceHarness harness = newHarness();
+        harness.resetPort.resetStarted = new CountDownLatch(1);
+        harness.resetPort.allowResetToFinish = new CountDownLatch(1);
+        Object arena = harness.arenaDefinition("bridge", "Bridge", true);
+        harness.register(arena);
+
+        Object reservation = harness.reserve("bridge", "match:queue-1");
+        CountDownLatch releaseDone = new CountDownLatch(1);
+        CountDownLatch releaseStarted = harness.resetPort.resetStarted;
+        Thread releaseThread = new Thread(() -> {
+            try {
+                harness.release(recordComponentValue(reservation, "reservationId"));
+            } finally {
+                releaseDone.countDown();
+            }
+        }, "release-thread");
+        releaseThread.start();
+
+        assertTrue(releaseStarted.await(1, TimeUnit.SECONDS), "Reset should begin before overlap assertion");
+
+        IllegalStateException exception =
+                assertThrows(IllegalStateException.class, () -> harness.reserve("bridge", "match:during-reset"));
+        assertEquals("Arena is resetting: bridge", exception.getMessage());
+
+        harness.resetPort.allowResetToFinish.countDown();
+        assertTrue(releaseDone.await(1, TimeUnit.SECONDS), "Release should finish after reset is unblocked");
+
+        Object nextReservation = harness.reserve("bridge", "match:after-reset");
+        assertEquals("match:after-reset", recordComponentValue(nextReservation, "ownerKey"));
+    }
+
+    @Test
     void resetFailureDoesNotWedgeArenaReservationState() {
         ServiceHarness harness = newHarness();
         harness.resetPort.throwOnReset = new IllegalStateException("reset failed");
@@ -157,6 +190,45 @@ final class ArenaRegistryServiceTest {
 
         Object nextReservation = harness.reserve("bridge", "match:queue-2");
         assertEquals("match:queue-2", recordComponentValue(nextReservation, "ownerKey"));
+    }
+
+    @Test
+    void resetFailureClearsResettingMarkerAfterThrowing() throws Exception {
+        ServiceHarness harness = newHarness();
+        harness.resetPort.resetStarted = new CountDownLatch(1);
+        harness.resetPort.allowResetToFinish = new CountDownLatch(1);
+        harness.resetPort.throwOnReset = new IllegalStateException("reset failed");
+        Object arena = harness.arenaDefinition("bridge", "Bridge", true);
+        harness.register(arena);
+
+        Object reservation = harness.reserve("bridge", "match:queue-1");
+        CountDownLatch releaseFailed = new CountDownLatch(1);
+        Throwable[] releaseFailure = new Throwable[1];
+        Thread releaseThread = new Thread(() -> {
+            try {
+                harness.release(recordComponentValue(reservation, "reservationId"));
+            } catch (Throwable throwable) {
+                releaseFailure[0] = throwable;
+            } finally {
+                releaseFailed.countDown();
+            }
+        }, "release-thread");
+        releaseThread.start();
+
+        assertTrue(harness.resetPort.resetStarted.await(1, TimeUnit.SECONDS), "Reset should begin before overlap assertion");
+
+        IllegalStateException overlapException =
+                assertThrows(IllegalStateException.class, () -> harness.reserve("bridge", "match:during-reset"));
+        assertEquals("Arena is resetting: bridge", overlapException.getMessage());
+
+        harness.resetPort.allowResetToFinish.countDown();
+        assertTrue(releaseFailed.await(1, TimeUnit.SECONDS), "Release should finish after reset failure");
+
+        IllegalStateException resetFailure = assertInstanceOf(IllegalStateException.class, releaseFailure[0]);
+        assertEquals("reset failed", resetFailure.getMessage());
+
+        Object nextReservation = harness.reserve("bridge", "match:after-failed-reset");
+        assertEquals("match:after-failed-reset", recordComponentValue(nextReservation, "ownerKey"));
     }
 
     @Test
@@ -453,6 +525,8 @@ final class ArenaRegistryServiceTest {
 
         private final List<Object> resetCalls = new ArrayList<>();
         private RuntimeException throwOnReset;
+        private CountDownLatch resetStarted;
+        private CountDownLatch allowResetToFinish;
 
         @Override
         public Object invoke(Object proxy, Method method, Object[] arguments) {
@@ -460,6 +534,19 @@ final class ArenaRegistryServiceTest {
                 throw new UnsupportedOperationException("Unexpected reset port method: " + method.getName());
             }
             resetCalls.add(arguments[0]);
+            if (resetStarted != null) {
+                resetStarted.countDown();
+            }
+            if (allowResetToFinish != null) {
+                try {
+                    if (!allowResetToFinish.await(1, TimeUnit.SECONDS)) {
+                        throw new AssertionError("Timed out waiting to finish reset");
+                    }
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError("Interrupted while waiting to finish reset", exception);
+                }
+            }
             if (throwOnReset != null) {
                 throw throwOnReset;
             }

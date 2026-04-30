@@ -8,9 +8,11 @@ import io.github.xreatlabz.revprac.ports.arenas.ArenaRegistryRepository;
 import io.github.xreatlabz.revprac.ports.arenas.ArenaResetPort;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -24,6 +26,7 @@ public final class ArenaRegistryService {
     private final ReentrantLock mutationLock = new ReentrantLock();
     private final Map<ArenaReservationId, ArenaReservation> activeReservations = new HashMap<>();
     private final Map<ArenaId, ArenaReservationId> reservationsByArenaId = new HashMap<>();
+    private final Set<ArenaId> resettingArenaIds = new HashSet<>();
 
     public ArenaRegistryService(ArenaRegistryRepository arenaRegistryRepository, ArenaResetPort arenaResetPort) {
         this.arenaRegistryRepository = Objects.requireNonNull(arenaRegistryRepository, "arenaRegistryRepository");
@@ -65,6 +68,9 @@ public final class ArenaRegistryService {
             if (reservationsByArenaId.containsKey(arenaId)) {
                 throw new IllegalStateException("Arena is already reserved: " + arenaId.value());
             }
+            if (resettingArenaIds.contains(arenaId)) {
+                throw new IllegalStateException("Arena is resetting: " + arenaId.value());
+            }
 
             ArenaReservation reservation =
                     new ArenaReservation(new ArenaReservationId(UUID.randomUUID()), arenaId, ownerKey);
@@ -80,6 +86,7 @@ public final class ArenaRegistryService {
         Objects.requireNonNull(reservationId, "reservationId");
 
         ArenaDefinition arenaDefinitionToReset;
+        ArenaId arenaIdToReset;
         mutationLock.lock();
         try {
             ArenaReservation reservation = activeReservations.remove(reservationId);
@@ -87,14 +94,25 @@ public final class ArenaRegistryService {
                 throw new IllegalStateException("Unknown reservation: " + reservationId.value());
             }
 
-            arenaDefinitionToReset = arenaRegistryRepository.find(reservation.arenaId())
+            arenaIdToReset = reservation.arenaId();
+            arenaDefinitionToReset = arenaRegistryRepository.find(arenaIdToReset)
                     .orElseThrow(() -> new IllegalStateException(
-                            "Arena is not registered: " + reservation.arenaId().value()));
-            reservationsByArenaId.remove(reservation.arenaId());
+                            "Arena is not registered: " + arenaIdToReset.value()));
+            reservationsByArenaId.remove(arenaIdToReset);
+            resettingArenaIds.add(arenaIdToReset);
         } finally {
             mutationLock.unlock();
         }
 
-        arenaResetPort.reset(arenaDefinitionToReset);
+        try {
+            arenaResetPort.reset(arenaDefinitionToReset);
+        } finally {
+            mutationLock.lock();
+            try {
+                resettingArenaIds.remove(arenaIdToReset);
+            } finally {
+                mutationLock.unlock();
+            }
+        }
     }
 }
