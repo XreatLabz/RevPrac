@@ -46,17 +46,24 @@ public final class PaperKitLoadoutAdapter {
         Objects.requireNonNull(player, "player");
         Objects.requireNonNull(definition, "definition");
 
+        ItemStack[] storageContents = deserializeItems(definition.inventory().storage(), "storage");
+        ItemStack[] armorContents = deserializeItems(definition.inventory().armor(), "armor");
+        ItemStack[] extraContents = deserializeItems(definition.inventory().extra(), "extra");
+        List<PotionEffect> potionEffects = definition.potionEffects().stream()
+                .map(PaperKitLoadoutAdapter::restoreEffect)
+                .toList();
+
         player.closeInventory();
-        player.getInventory().setStorageContents(deserializeItems(definition.inventory().storage(), "storage"));
-        player.getInventory().setArmorContents(deserializeItems(definition.inventory().armor(), "armor"));
-        player.getInventory().setExtraContents(deserializeItems(definition.inventory().extra(), "extra"));
+        player.getInventory().setStorageContents(storageContents);
+        player.getInventory().setArmorContents(armorContents);
+        player.getInventory().setExtraContents(extraContents);
         player.getInventory().setHeldItemSlot(definition.inventory().selectedSlot());
 
         player.getActivePotionEffects().stream()
                 .map(PotionEffect::getType)
                 .forEach(player::removePotionEffect);
-        for (KitPotionEffect effect : definition.potionEffects()) {
-            player.addPotionEffect(restoreEffect(effect));
+        for (PotionEffect effect : potionEffects) {
+            player.addPotionEffect(effect);
         }
     }
 
@@ -78,7 +85,7 @@ public final class PaperKitLoadoutAdapter {
 
         PotionEffectType effectType = Registry.EFFECT.get(effectKey);
         if (effectType == null) {
-            throw new IllegalStateException("Unknown potion effect type: " + effect.effectKey());
+            throw new IllegalArgumentException("Unknown potion effect type: " + effect.effectKey());
         }
 
         return new PotionEffect(
@@ -119,7 +126,7 @@ public final class PaperKitLoadoutAdapter {
 
         try {
             return ItemStack.deserializeBytes(Base64.getDecoder().decode(encodedItem));
-        } catch (IllegalArgumentException exception) {
+        } catch (RuntimeException exception) {
             throw new IllegalArgumentException("Invalid item payload at " + path, exception);
         }
     }

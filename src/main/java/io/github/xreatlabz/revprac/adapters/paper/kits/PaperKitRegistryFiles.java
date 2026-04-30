@@ -9,15 +9,19 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import org.bukkit.NamespacedKey;
+import org.bukkit.Registry;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.potion.PotionEffectType;
 
 public final class PaperKitRegistryFiles {
 
@@ -105,8 +109,10 @@ public final class PaperKitRegistryFiles {
         List<KitPotionEffect> effects = new ArrayList<>(values.size());
         for (int index = 0; index < values.size(); index++) {
             Map<?, ?> effectMap = requireMap(values.get(index), path + "[" + index + "]");
+            String effectKey = requireString(effectMap, "effect", path + "[" + index + "].effect");
+            requireEffectKey(effectKey, path + "[" + index + "].effect");
             effects.add(new KitPotionEffect(
-                    requireString(effectMap, "effect", path + "[" + index + "].effect"),
+                    effectKey,
                     requireInt(effectMap, "duration-ticks", path + "[" + index + "].duration-ticks"),
                     requireInt(effectMap, "amplifier", path + "[" + index + "].amplifier"),
                     requireBoolean(effectMap, "ambient", path + "[" + index + "].ambient"),
@@ -175,12 +181,33 @@ public final class PaperKitRegistryFiles {
             if (value == null) {
                 decoded.add(null);
             } else if (value instanceof String stringValue) {
+                validateItemPayload(stringValue, path + "[" + index + "]");
                 decoded.add(stringValue);
             } else {
                 throw new IllegalArgumentException(path + "[" + index + "] must be a string or null");
             }
         }
         return decoded;
+    }
+
+    private static void validateItemPayload(String encodedItem, String path) {
+        try {
+            ItemStack.deserializeBytes(Base64.getDecoder().decode(encodedItem));
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("Invalid item payload at " + path, exception);
+        }
+    }
+
+    private static void requireEffectKey(String effectKey, String path) {
+        NamespacedKey namespacedKey = NamespacedKey.fromString(effectKey);
+        if (namespacedKey == null) {
+            throw new IllegalArgumentException("Invalid potion effect key at " + path + ": " + effectKey);
+        }
+
+        PotionEffectType effectType = Registry.EFFECT.get(namespacedKey);
+        if (effectType == null) {
+            throw new IllegalArgumentException("Unknown potion effect type at " + path + ": " + effectKey);
+        }
     }
 
     private static List<?> requireList(Object value, String path) {
@@ -219,7 +246,14 @@ public final class PaperKitRegistryFiles {
     private static int requireInt(Map<?, ?> values, String key, String path) {
         Object value = values.get(key);
         if (value instanceof Number number) {
-            return number.intValue();
+            double numericValue = number.doubleValue();
+            if (Double.isFinite(numericValue)
+                    && numericValue >= Integer.MIN_VALUE
+                    && numericValue <= Integer.MAX_VALUE
+                    && Math.rint(numericValue) == numericValue) {
+                return (int) numericValue;
+            }
+            throw new IllegalArgumentException(path + " must be an integer");
         }
         throw new IllegalArgumentException(path + " is required");
     }

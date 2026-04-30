@@ -8,8 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.xreatlabz.revprac.domain.kits.KitDefinition;
 import io.github.xreatlabz.revprac.domain.kits.KitId;
+import io.github.xreatlabz.revprac.domain.kits.KitInventory;
+import io.github.xreatlabz.revprac.domain.kits.KitPotionEffect;
 import io.github.xreatlabz.revprac.domain.kits.KitRules;
 import java.nio.file.Path;
+import java.util.Base64;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import org.bukkit.Material;
@@ -191,7 +195,114 @@ final class PaperKitLoadoutAdapterTest {
         assertTrue(exception.getMessage().contains("storage[0]"));
     }
 
+    @Test
+    void unknownPotionEffectKeyLeavesExistingInventoryAndEffectsUnchanged() {
+        ServerMock server = MockBukkit.mock();
+        PlayerMock player = server.addPlayer("apply-player");
+        ItemStack[] baselineStorage = new ItemStack[player.getInventory().getStorageContents().length];
+        baselineStorage[0] = stack(Material.STONE_SWORD, 1);
+        baselineStorage[9] = stack(Material.COOKED_BEEF, 16);
+        player.getInventory().setStorageContents(baselineStorage);
+
+        ItemStack[] baselineArmor = new ItemStack[player.getInventory().getArmorContents().length];
+        baselineArmor[3] = stack(Material.IRON_HELMET, 1);
+        player.getInventory().setArmorContents(baselineArmor);
+
+        ItemStack[] baselineExtra = new ItemStack[player.getInventory().getExtraContents().length];
+        baselineExtra[baselineExtra.length - 1] = stack(Material.SHIELD, 1);
+        player.getInventory().setExtraContents(baselineExtra);
+        player.getInventory().setHeldItemSlot(0);
+        player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 300, 0, false, true, true));
+
+        KitDefinition invalid = new KitDefinition(
+                new KitId("broken"),
+                "Broken",
+                new KitInventory(
+                        Arrays.asList(encoded(stack(Material.DIAMOND_SWORD, 1)), null),
+                        List.of(encoded(stack(Material.DIAMOND_BOOTS, 1))),
+                        List.of(encoded(stack(Material.TOTEM_OF_UNDYING, 1))),
+                        1),
+                List.of(new KitPotionEffect("minecraft:not_real", 200, 1, false, true, true)),
+                new KitRules(false, false, true, false),
+                true);
+
+        PaperKitLoadoutAdapter adapter = new PaperKitLoadoutAdapter();
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> adapter.apply(player, invalid));
+        assertTrue(exception.getMessage().contains("minecraft:not_real"));
+        assertArrayEquals(baselineStorage, player.getInventory().getStorageContents());
+        assertArrayEquals(baselineArmor, player.getInventory().getArmorContents());
+        assertArrayEquals(baselineExtra, player.getInventory().getExtraContents());
+        assertEquals(0, player.getInventory().getHeldItemSlot());
+        assertPotionEffectsEqual(List.of(new PotionEffect(PotionEffectType.SPEED, 300, 0, false, true, true)), player);
+    }
+
+    @Test
+    void corruptButBase64ValidLaterItemBytesLeaveExistingInventoryAndEffectsUnchanged() {
+        ServerMock server = MockBukkit.mock();
+        PlayerMock player = server.addPlayer("apply-player");
+        ItemStack[] baselineStorage = new ItemStack[player.getInventory().getStorageContents().length];
+        baselineStorage[2] = stack(Material.WOODEN_AXE, 1);
+        player.getInventory().setStorageContents(baselineStorage);
+
+        ItemStack[] baselineArmor = new ItemStack[player.getInventory().getArmorContents().length];
+        baselineArmor[0] = stack(Material.LEATHER_BOOTS, 1);
+        player.getInventory().setArmorContents(baselineArmor);
+
+        ItemStack[] baselineExtra = new ItemStack[player.getInventory().getExtraContents().length];
+        baselineExtra[baselineExtra.length - 1] = stack(Material.TOTEM_OF_UNDYING, 1);
+        player.getInventory().setExtraContents(baselineExtra);
+        player.getInventory().setHeldItemSlot(2);
+        player.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 120, 1, false, true, false));
+
+        KitDefinition invalid = new KitDefinition(
+                new KitId("broken-bytes"),
+                "BrokenBytes",
+                new KitInventory(
+                        List.of(encoded(stack(Material.BOW, 1))),
+                        List.of(encoded(stack(Material.CHAINMAIL_BOOTS, 1))),
+                        List.of(Base64.getEncoder().encodeToString(new byte[] {1, 2, 3, 4})),
+                        4),
+                List.of(new KitPotionEffect("minecraft:speed", 100, 0, false, true, true)),
+                new KitRules(false, false, true, false),
+                true);
+
+        PaperKitLoadoutAdapter adapter = new PaperKitLoadoutAdapter();
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> adapter.apply(player, invalid));
+        assertTrue(exception.getMessage().contains("extra[0]"));
+        assertArrayEquals(baselineStorage, player.getInventory().getStorageContents());
+        assertArrayEquals(baselineArmor, player.getInventory().getArmorContents());
+        assertArrayEquals(baselineExtra, player.getInventory().getExtraContents());
+        assertEquals(2, player.getInventory().getHeldItemSlot());
+        assertPotionEffectsEqual(List.of(new PotionEffect(PotionEffectType.REGENERATION, 120, 1, false, true, false)), player);
+    }
+
     private static ItemStack stack(Material material, int amount) {
         return new ItemStack(material, amount);
+    }
+
+    private static String encoded(ItemStack itemStack) {
+        return Base64.getEncoder().encodeToString(itemStack.serializeAsBytes());
+    }
+
+    private static void assertPotionEffectsEqual(List<PotionEffect> expected, PlayerMock player) {
+        List<PotionEffect> actual = player.getActivePotionEffects().stream()
+                .sorted(Comparator.comparing(effect -> effect.getType().getKey().asString()))
+                .toList();
+        List<PotionEffect> sortedExpected = expected.stream()
+                .sorted(Comparator.comparing(effect -> effect.getType().getKey().asString()))
+                .toList();
+        assertEquals(sortedExpected.size(), actual.size());
+        for (int index = 0; index < sortedExpected.size(); index++) {
+            PotionEffect expectedEffect = sortedExpected.get(index);
+            PotionEffect actualEffect = actual.get(index);
+            assertEquals(expectedEffect.getType(), actualEffect.getType());
+            assertEquals(expectedEffect.getDuration(), actualEffect.getDuration());
+            assertEquals(expectedEffect.getAmplifier(), actualEffect.getAmplifier());
+            assertEquals(expectedEffect.isAmbient(), actualEffect.isAmbient());
+            assertEquals(expectedEffect.hasParticles(), actualEffect.hasParticles());
+            assertEquals(expectedEffect.hasIcon(), actualEffect.hasIcon());
+        }
     }
 }

@@ -182,7 +182,14 @@ public final class PaperArenaRegistryFiles {
     private static int requireInt(Map<?, ?> values, String key, String path) {
         Object value = values.get(key);
         if (value instanceof Number number) {
-            return number.intValue();
+            double numericValue = number.doubleValue();
+            if (Double.isFinite(numericValue)
+                    && numericValue >= Integer.MIN_VALUE
+                    && numericValue <= Integer.MAX_VALUE
+                    && Math.rint(numericValue) == numericValue) {
+                return (int) numericValue;
+            }
+            throw new IllegalArgumentException(path + " must be an integer");
         }
         throw new IllegalArgumentException(path + " is required");
     }

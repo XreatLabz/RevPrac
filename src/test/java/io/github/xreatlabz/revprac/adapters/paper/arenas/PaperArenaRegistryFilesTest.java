@@ -237,6 +237,45 @@ final class PaperArenaRegistryFilesTest {
         assertTrue(exception.getMessage().contains("arenas[1].display-name"));
     }
 
+    @Test
+    void decimalArenaBoundsFailWithFieldPath() throws Exception {
+        Files.writeString(
+                tempDir.resolve("arenas.yml"),
+                """
+                arenas:
+                  - id: bridge
+                    display-name: Bridge
+                    enabled: true
+                    bounds:
+                      world: minecraft:arena
+                      min-x: 0.5
+                      min-y: 64
+                      min-z: 0
+                      max-x: 10
+                      max-y: 80
+                      max-z: 10
+                    spawn-one:
+                      world: minecraft:arena
+                      x: 1.0
+                      y: 65.0
+                      z: 1.0
+                      yaw: 0.0
+                      pitch: 0.0
+                    spawn-two:
+                      world: minecraft:arena
+                      x: 9.0
+                      y: 65.0
+                      z: 9.0
+                      yaw: 180.0
+                      pitch: 0.0
+                """);
+
+        PaperArenaRegistryFiles files = new PaperArenaRegistryFiles(tempDir);
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, files::load);
+        assertTrue(exception.getMessage().contains("arenas[0].bounds.min-x"));
+    }
+
     private static ArenaDefinition arena(String id, String displayName) {
         return new ArenaDefinition(
                 new ArenaId(id),
