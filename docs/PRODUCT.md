@@ -1,6 +1,6 @@
 # Product Direction
 
-RevPrac is a Minecraft practice core plugin for Modern Paper 1.21. It is intended to provide the foundation for a competitive practice server experience similar in spirit to StrikePractice-style workflows.
+RevPrac is a Minecraft practice core plugin for Paper 1.21.11. It is intended to provide the foundation for a competitive practice server experience similar in spirit to StrikePractice-style workflows.
 
 ## Audience
 
@@ -19,13 +19,10 @@ RevPrac is a Minecraft practice core plugin for Modern Paper 1.21. It is intende
 - Configuration and storage that are readable, versioned, and migration-friendly.
 - Integration points for scoreboards, tab lists, placeholders, combat logging, and external services.
 
-## First Commit Non-Goals
+## Current Non-Goals
 
-- No plugin source code.
-- No Gradle or Maven scaffold.
-- No Paper server runtime.
 - No arena, kit, queue, match, or stats implementation.
-- No compatibility promise beyond the documented Modern Paper 1.21 direction.
+- No compatibility promise beyond the documented Paper 1.21.11 direction.
 
 ## Product Principles
 

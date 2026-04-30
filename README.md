@@ -18,6 +18,7 @@ This repository follows an agent-legible workflow inspired by OpenAI's harness e
 
 - [AGENTS.md](AGENTS.md) for agent entry instructions.
 - [docs/README.md](docs/README.md) for the documentation map.
+- [ROADMAP.md](ROADMAP.md) for the current implementation path and phase gates.
 - [docs/PRODUCT.md](docs/PRODUCT.md) for product direction.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for planned boundaries.
 - [docs/BUILDING.md](docs/BUILDING.md) for build and verification commands.

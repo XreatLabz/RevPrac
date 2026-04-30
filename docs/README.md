@@ -5,6 +5,7 @@ This directory is the source of truth for RevPrac. `AGENTS.md` should stay short
 ## Start Here
 
 - `PRODUCT.md`: product vision, audience, feature direction, and current non-goals.
+- [`ROADMAP.md`](../ROADMAP.md): implementation phases, dependency policy, and verification gates.
 - `ARCHITECTURE.md`: planned domain boundaries and dependency direction.
 - `BUILDING.md`: local build, test, smoke, CI, and dependency update workflow.
 - `HARNESS_ENGINEERING.md`: how this repository adopts agent-first harness engineering.

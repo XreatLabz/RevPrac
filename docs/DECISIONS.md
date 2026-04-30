@@ -14,17 +14,24 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: Do not scaffold plugin code, Gradle, CI, or runtime harness in the first commit.
 - Rationale: RevPrac should begin with a clear repository contract before implementation choices are locked in.
 
-## 2026-04-30: Target Modern Paper 1.21
+## 2026-04-30: Target Paper 1.21.11
 
-- Decision: RevPrac targets Modern Paper 1.21 direction for future plugin work.
+- Decision: RevPrac targets Paper/Minecraft 1.21.11 for future plugin work.
 - Decision: Future setup should follow official PaperMC documentation.
-- Rationale: Modern Paper keeps the initial architecture aligned with current plugin development practices while avoiding legacy compatibility complexity.
+- Rationale: Paper 1.21.11 keeps the initial architecture aligned with current plugin development practices while avoiding legacy compatibility complexity.
 
 ## 2026-04-30: Adopt Harness Engineering
 
 - Decision: `AGENTS.md` is a short map, and `docs/` is the source of truth.
 - Decision: Meaningful project decisions and behavior changes must update documentation.
 - Rationale: Agent-first development works best when context is repository-local, concise, inspectable, and verifiable.
+
+## 2026-04-30: Use ROADMAP.md as Execution Roadmap
+
+- Decision: `ROADMAP.md` is the execution roadmap for phased implementation work.
+- Decision: Phase exit criteria are the gate for advancing scope, and dependency additions should stay within the documented phase unless a later phase explicitly requires them.
+- Decision: `docs/` remains the source of truth for behavior, setup, and workflow changes; the roadmap coordinates execution, not policy.
+- Rationale: The repository needs a single working plan with clear gates so implementation stays staged, dependency growth stays intentional, and docs remain authoritative.
 
 ## 2026-04-30: Scaffold API-Only Paper Base
 
