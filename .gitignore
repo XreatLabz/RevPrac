@@ -1,0 +1,50 @@
+# Java and Gradle
+.gradle/
+build/
+out/
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+
+# Gradle wrapper runtime files
+gradle-app.setting
+!gradle-wrapper.jar
+
+# IDEs and editors
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Minecraft server/runtime artifacts
+server/
+run/
+plugins/
+world/
+world_nether/
+world_the_end/
+logs/
+crash-reports/
+cache/
+libraries/
+versions/
+eula.txt
+banned-ips.json
+banned-players.json
+ops.json
+usercache.json
+whitelist.json
+
+# Environment and local-only configuration
+.env
+.env.*
+!.env.example
