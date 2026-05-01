@@ -76,7 +76,9 @@ final class RevPracDuelCommandTest {
         harness.requester.setOp(true);
 
         harness.command.onCommand(harness.requester, command(), "duel", new String[] {"target", "arena-one"});
-        assertEquals("Usage: /duel <player> <arena> <kit>", harness.requester.nextMessage());
+        assertEquals(
+                "Usage: /duel <player> <arena> <kit> or /duel request <player> <arena> <kit>",
+                harness.requester.nextMessage());
 
         harness.command.onCommand(harness.requester, command(), "duel", new String[] {"missing", "arena-one", "nodebuff"});
         assertEquals("Player not found: missing.", harness.requester.nextMessage());
@@ -101,14 +103,31 @@ final class RevPracDuelCommandTest {
     }
 
     @Test
-    void duelRequestTreatsReservedPlayerNamesAsTargetsWhenUsingTheThreeArgForm() {
+    void knownSubcommandsWithWrongArityShowUsageInsteadOfFallingThroughToRequestHandling() {
         Harness harness = new Harness();
         harness.requester.setOp(true);
         PlayerMock reservedNameTarget = harness.server.addPlayer("accept");
         harness.matchPlayerPort.onlinePlayers.add(new PlayerId(reservedNameTarget.getUniqueId()));
 
         harness.command.onCommand(
-                harness.requester, command(), "duel", new String[] {"accept", "arena-one", "nodebuff"});
+                harness.requester, command(), "duel", new String[] {"accept", "target", "arena-one"});
+
+        assertEquals("Usage: /duel accept <player>", harness.requester.nextMessage());
+        assertTrue(harness.requestRepository.findAll().isEmpty());
+    }
+
+    @Test
+    void duelRequestSupportsReservedPlayerNamesThroughExplicitRequestSubcommand() {
+        Harness harness = new Harness();
+        harness.requester.setOp(true);
+        PlayerMock reservedNameTarget = harness.server.addPlayer("accept");
+        harness.matchPlayerPort.onlinePlayers.add(new PlayerId(reservedNameTarget.getUniqueId()));
+
+        harness.command.onCommand(
+                harness.requester,
+                command(),
+                "duel",
+                new String[] {"request", "accept", "arena-one", "nodebuff"});
 
         assertEquals("Sent duel request to accept.", harness.requester.nextMessage());
         DuelRequest created = harness.requestRepository.findAll().stream().findFirst().orElseThrow();

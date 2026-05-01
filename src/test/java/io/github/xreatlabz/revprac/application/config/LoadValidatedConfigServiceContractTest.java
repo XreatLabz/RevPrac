@@ -14,6 +14,7 @@ import io.github.xreatlabz.revprac.ports.config.ConfigSource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -55,6 +56,20 @@ final class LoadValidatedConfigServiceContractTest {
 
         assertTrue(config.bootstrap().failFastOnEnable());
         assertFalse(config.diagnostics().verboseLifecycleLogs());
+        assertEquals(30, config.matches().duelRequestExpirySeconds());
+        assertEquals(100, config.matches().countdownTicks());
+        assertEquals(12000, config.matches().maxDurationTicks());
+        assertTrue(config.matches().spectatorsEnabled());
+    }
+
+    @Test
+    void explicitMapMatchesParentUsesDocumentedDefaults() {
+        Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "matches", Map.of())));
+
+        RevPracConfig config = assertOk(result);
+
         assertEquals(30, config.matches().duelRequestExpirySeconds());
         assertEquals(100, config.matches().countdownTicks());
         assertEquals(12000, config.matches().maxDurationTicks());
@@ -108,6 +123,42 @@ final class LoadValidatedConfigServiceContractTest {
         Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
                 "config-version", 1,
                 "matches", "not-a-section")));
+
+        Problem problem = assertErr(result);
+
+        assertEquals(ProblemCategory.CONFIGURATION, problem.category());
+        assertEquals("matches", problem.path());
+    }
+
+    @Test
+    void listMatchesParentReturnsConfigurationProblemAtMatchesPath() {
+        Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "matches", List.of("not-a-section"))));
+
+        Problem problem = assertErr(result);
+
+        assertEquals(ProblemCategory.CONFIGURATION, problem.category());
+        assertEquals("matches", problem.path());
+    }
+
+    @Test
+    void arrayMatchesParentReturnsConfigurationProblemAtMatchesPath() {
+        Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "matches", new Object[] {"not-a-section"})));
+
+        Problem problem = assertErr(result);
+
+        assertEquals(ProblemCategory.CONFIGURATION, problem.category());
+        assertEquals("matches", problem.path());
+    }
+
+    @Test
+    void opaqueObjectMatchesParentReturnsConfigurationProblemAtMatchesPath() {
+        Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "matches", new Object())));
 
         Problem problem = assertErr(result);
 

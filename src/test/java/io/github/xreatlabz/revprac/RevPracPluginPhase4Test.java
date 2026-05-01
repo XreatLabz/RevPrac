@@ -6,7 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import io.github.xreatlabz.revprac.adapters.paper.kits.PaperKitLoadoutAdapter;
+import io.github.xreatlabz.revprac.adapters.paper.matches.PaperMatchPlayerAdapter;
+import io.github.xreatlabz.revprac.adapters.paper.matches.PaperMatchTicker;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryArenaRegistryRepository;
+import io.github.xreatlabz.revprac.adapters.storage.InMemoryDuelRequestRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryKitRegistryRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryMatchRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRepository;
@@ -15,11 +19,10 @@ import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.config.BootstrapConfig;
 import io.github.xreatlabz.revprac.application.config.DiagnosticsConfig;
 import io.github.xreatlabz.revprac.application.config.RevPracConfig;
+import io.github.xreatlabz.revprac.application.matches.DuelRequestService;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
-import io.github.xreatlabz.revprac.adapters.paper.matches.PaperMatchTicker;
 import io.github.xreatlabz.revprac.application.matches.MatchLifecycleService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
-import io.github.xreatlabz.revprac.application.matches.DuelRequestService;
 import io.github.xreatlabz.revprac.bootstrap.BootstrapRuntime;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaCuboid;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaDefinition;
@@ -47,6 +50,7 @@ import io.github.xreatlabz.revprac.ports.lifecycle.LifecycleReporter;
 import io.github.xreatlabz.revprac.ports.matches.MatchPlayerPort;
 import io.github.xreatlabz.revprac.ports.players.PlayerStatePort;
 import java.lang.reflect.Field;
+import java.lang.reflect.Proxy;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.ArrayList;
@@ -55,11 +59,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.permissions.Permission;
 import org.bukkit.permissions.PermissionDefault;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.scheduler.BukkitTask;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockbukkit.mockbukkit.MockBukkit;
@@ -175,6 +182,64 @@ final class RevPracPluginPhase4Test {
         assertEquals(List.of("RevPrac runtime shut down."), harness.lifecycleReporter.infoMessages);
     }
 
+    @Test
+    void runtimeShutdownAttemptsTickerMatchAndPlayerShutdownAfterDuelIntakeFailureAndAggregatesFailures() {
+        RuntimeShutdownHarness harness = new RuntimeShutdownHarness();
+        harness.startManagedMatch();
+        harness.breakDuelIntakeState();
+        harness.failTickerCancelTimes(1, "ticker cancel failed");
+        harness.matchPlayerPort.failClearTimes(harness.requester, 2, "match clear failed");
+        harness.runtimePlayerStatePort.failRestoreTimes(harness.runtimeManagedPlayer, 1, "runtime player restore failed");
+
+        RuntimeException failure = assertThrows(RuntimeException.class, harness.runtime::shutdown);
+
+        assertTrue(failure instanceof NullPointerException, "Duel intake failure should surface as the primary shutdown failure");
+        assertEquals(
+                List.of("ticker cancel failed", "match clear failed", "runtime player restore failed"),
+                suppressedMessages(failure));
+        assertEquals("ticker-cancel", harness.shutdownOrder.getFirst());
+        assertEquals(
+                4L,
+                harness.shutdownOrder.stream().filter(step -> step.startsWith("match-clear:")).count(),
+                "Shutdown should still attempt both match participant teardowns across the retried match shutdown");
+        assertTrue(
+                harness.shutdownOrder.indexOf("match-clear:" + harness.requester.value())
+                        < harness.shutdownOrder.indexOf("runtime-player-restore:" + harness.runtimeManagedPlayer.value()));
+        assertTrue(
+                harness.shutdownOrder.indexOf("match-clear:" + harness.target.value())
+                        < harness.shutdownOrder.indexOf("runtime-player-restore:" + harness.runtimeManagedPlayer.value()));
+        assertEquals(
+                List.of(),
+                harness.lifecycleReporter.infoMessages,
+                "Runtime shutdown must not report completion when any shutdown step fails");
+    }
+
+    @Test
+    void runtimeShutdownCanRetryAfterFlakyDuelIntakeAndTickerFailures() {
+        RuntimeShutdownHarness harness = new RuntimeShutdownHarness();
+        Match match = harness.startManagedMatch();
+        harness.breakDuelIntakeState();
+        harness.failTickerCancelTimes(1, "ticker cancel failed");
+
+        RuntimeException firstFailure = assertThrows(RuntimeException.class, harness.runtime::shutdown);
+
+        assertTrue(firstFailure instanceof NullPointerException);
+        assertEquals(List.of("ticker cancel failed"), suppressedMessages(firstFailure));
+        assertTrue(
+                harness.shutdownOrder.contains("ticker-cancel"),
+                "Ticker cancellation should still be attempted on the failed shutdown pass");
+        assertEquals(
+                List.of(),
+                harness.lifecycleReporter.infoMessages,
+                "Runtime shutdown should not report completion until duel intake and ticker shutdown succeed");
+
+        harness.repairDuelIntakeState();
+        harness.runtime.shutdown();
+
+        assertTrue(harness.matchRepository.find(match.id()).isEmpty(), "Second shutdown should retry and drain the retained match");
+        assertEquals(List.of("RevPrac runtime shut down."), harness.lifecycleReporter.infoMessages);
+    }
+
     private static BootstrapRuntime runtime(RevPracPlugin plugin) {
         try {
             Field runtimeField = RevPracPlugin.class.getDeclaredField("runtime");
@@ -247,6 +312,24 @@ final class RevPracPluginPhase4Test {
                 new MatchRuleset(3, 200, true),
                 event -> {
                 });
+        private final DuelRequestService duelRequestService = new DuelRequestService(
+                new InMemoryDuelRequestRepository(),
+                matchRepository,
+                arenaRegistryService,
+                kitRegistryService,
+                matchPlayerPort,
+                matchLifecycleService,
+                java.time.Clock.systemUTC(),
+                java.time.Duration.ofSeconds(30),
+                event -> {
+                });
+        private final ServerMock server = MockBukkit.mock();
+        private final Plugin plugin = MockBukkit.load(RevPracPlugin.class);
+        private final PaperMatchTicker paperMatchTicker = new PaperMatchTicker(
+                plugin,
+                matchLifecycleService,
+                matchRepository,
+                new PaperMatchPlayerAdapter(server, new PaperKitLoadoutAdapter()));
         private final BootstrapRuntime runtime = new BootstrapRuntime(
                 new RevPracConfig(1, new BootstrapConfig(true), new DiagnosticsConfig(true)),
                 lifecycleReporter,
@@ -255,9 +338,9 @@ final class RevPracPluginPhase4Test {
                 kitRegistryService,
                 null,
                 null,
-                null,
+                duelRequestService,
                 matchLifecycleService,
-                null);
+                paperMatchTicker);
         private final PlayerId requester = new PlayerId(UUID.nameUUIDFromBytes("phase4-runtime-requester".getBytes()));
         private final PlayerId target = new PlayerId(UUID.nameUUIDFromBytes("phase4-runtime-target".getBytes()));
         private final PlayerId runtimeManagedPlayer =
@@ -307,6 +390,35 @@ final class RevPracPluginPhase4Test {
                     Instant.parse("2026-05-01T12:00:00Z"),
                     Instant.parse("2026-05-01T12:00:30Z"));
             return matchLifecycleService.startAcceptedDuel(acceptedRequest);
+        }
+
+        private void breakDuelIntakeState() {
+            setField(duelRequestService, "intakeClosed", null);
+        }
+
+        private void repairDuelIntakeState() {
+            setField(duelRequestService, "intakeClosed", new AtomicBoolean(false));
+        }
+
+        private void failTickerCancelTimes(int times, String message) {
+            int[] remainingFailures = {times};
+            setField(
+                    paperMatchTicker,
+                    "task",
+                    (BukkitTask) Proxy.newProxyInstance(
+                            BukkitTask.class.getClassLoader(),
+                            new Class<?>[] {BukkitTask.class},
+                            (proxy, method, args) -> {
+                                if (method.getName().equals("cancel")) {
+                                    shutdownOrder.add("ticker-cancel");
+                                    if (remainingFailures[0] > 0) {
+                                        remainingFailures[0]--;
+                                        throw new IllegalStateException(message);
+                                    }
+                                    return null;
+                                }
+                                return defaultValue(method.getReturnType());
+                            }));
         }
     }
 
@@ -415,5 +527,46 @@ final class RevPracPluginPhase4Test {
         @Override
         public void reset(ArenaDefinition arenaDefinition) {
         }
+    }
+
+    private static void setField(Object target, String fieldName, Object value) {
+        try {
+            Field field = target.getClass().getDeclaredField(fieldName);
+            field.setAccessible(true);
+            field.set(target, value);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("Could not set field " + fieldName + " on " + target.getClass().getSimpleName(), exception);
+        }
+    }
+
+    private static Object defaultValue(Class<?> returnType) {
+        if (!returnType.isPrimitive()) {
+            return null;
+        }
+        if (returnType == boolean.class) {
+            return false;
+        }
+        if (returnType == byte.class) {
+            return (byte) 0;
+        }
+        if (returnType == short.class) {
+            return (short) 0;
+        }
+        if (returnType == int.class) {
+            return 0;
+        }
+        if (returnType == long.class) {
+            return 0L;
+        }
+        if (returnType == float.class) {
+            return 0.0f;
+        }
+        if (returnType == double.class) {
+            return 0.0d;
+        }
+        if (returnType == char.class) {
+            return '\0';
+        }
+        throw new IllegalArgumentException("Unsupported primitive return type: " + returnType);
     }
 }

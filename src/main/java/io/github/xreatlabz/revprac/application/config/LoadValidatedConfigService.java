@@ -6,6 +6,7 @@ import io.github.xreatlabz.revprac.application.result.Problem;
 import io.github.xreatlabz.revprac.application.result.ProblemCategory;
 import io.github.xreatlabz.revprac.application.result.Result;
 import io.github.xreatlabz.revprac.ports.config.ConfigSource;
+import java.util.Map;
 
 public final class LoadValidatedConfigService {
 
@@ -160,16 +161,33 @@ public final class LoadValidatedConfigService {
 
     private boolean hasMalformedMatchesParent(ConfigSource source) {
         LookupValue matchesValue = read(source, "matches");
-        return matchesValue.present() && isScalarConfigValue(matchesValue.value());
+        return matchesValue.present() && !isSectionLikeConfigValue(matchesValue.value());
     }
 
-    private boolean isScalarConfigValue(Object value) {
-        return value == null
-                || value instanceof CharSequence
-                || value instanceof Number
-                || value instanceof Boolean
-                || value instanceof Character
-                || value instanceof Enum<?>;
+    private boolean isSectionLikeConfigValue(Object value) {
+        if (value == null) {
+            return false;
+        }
+        if (value instanceof Map<?, ?>) {
+            return true;
+        }
+        if (value.getClass().isArray() || value instanceof Iterable<?>) {
+            return false;
+        }
+        return hasSectionLikeAccessors(value.getClass());
+    }
+
+    private boolean hasSectionLikeAccessors(Class<?> type) {
+        return hasPublicMethod(type, "getKeys", boolean.class) && hasPublicMethod(type, "getValues", boolean.class);
+    }
+
+    private boolean hasPublicMethod(Class<?> type, String name, Class<?>... parameterTypes) {
+        try {
+            type.getMethod(name, parameterTypes);
+            return true;
+        } catch (NoSuchMethodException ignored) {
+            return false;
+        }
     }
 
     private Result<RevPracConfig> err(String code, String message, String path) {

@@ -115,30 +115,31 @@ public final class BootstrapRuntime {
             return;
         }
 
-        if (duelRequestService != null) {
-            duelRequestService.closeIntake();
-        }
-        if (paperMatchTicker != null) {
-            paperMatchTicker.cancel();
-        }
         RuntimeException failure = null;
-        if (matchLifecycleService != null) {
-            try {
-                matchLifecycleService.shutdownAll();
-            } catch (RuntimeException exception) {
-                failure = mergeFailures(failure, exception);
-            }
-        }
-        try {
-            playerSessionService.shutdownAll();
-        } catch (RuntimeException exception) {
-            failure = mergeFailures(failure, exception);
-        }
+        failure = attemptShutdownStep(failure, duelRequestService, DuelRequestService::closeIntake);
+        failure = attemptShutdownStep(failure, paperMatchTicker, PaperMatchTicker::cancel);
+        failure = attemptShutdownStep(failure, matchLifecycleService, MatchLifecycleService::shutdownAll);
+        failure = attemptShutdownStep(failure, playerSessionService, PlayerSessionService::shutdownAll);
         if (failure != null) {
             throw failure;
         }
         if (shutdown.compareAndSet(false, true) && config.diagnostics().verboseLifecycleLogs()) {
             lifecycleReporter.info("RevPrac runtime shut down.");
+        }
+    }
+
+    private <T> RuntimeException attemptShutdownStep(
+            RuntimeException currentFailure,
+            T stepOwner,
+            ShutdownStep<T> shutdownStep) {
+        if (stepOwner == null) {
+            return currentFailure;
+        }
+        try {
+            shutdownStep.run(stepOwner);
+            return currentFailure;
+        } catch (RuntimeException exception) {
+            return mergeFailures(currentFailure, exception);
         }
     }
 
@@ -148,5 +149,10 @@ public final class BootstrapRuntime {
         }
         current.addSuppressed(next);
         return current;
+    }
+
+    @FunctionalInterface
+    private interface ShutdownStep<T> {
+        void run(T stepOwner);
     }
 }

@@ -239,7 +239,7 @@ Implemented scope:
 - `ports.matches` for match/request repository and match-player adapter boundaries
 - `adapters.storage` in-memory match and duel-request repositories that keep active request and match state in memory
 - `adapters.paper.matches` listener, ticker, and player-prep adapters that enforce countdown freeze, spectator protections, death/quit handling, and per-tick progression
-- `/duel` request, accept, deny/decline, cancel, spectate, and forfeit command surface
+- `/duel <player> <arena> <kit>` plus explicit `/duel request <player> <arena> <kit>` request forms, with accept, deny/decline, cancel, spectate, and forfeit command surface
 - `application.config.MatchConfig` defaults and bootstrap wiring for duel-request expiry, countdown length, max duration, and spectator toggles
 
 Phase boundary:

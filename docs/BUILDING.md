@@ -102,7 +102,7 @@ rg -n "domain\\.matches|application\\.matches|ports\\.matches|adapters\\.paper\\
 
 The import check should return no matches in application, domain, ports, or storage. Match lifecycle logic belongs under `domain.matches` and `application.matches`; Paper event handling, ticker scheduling, and command parsing belong under `adapters.paper.matches` and `adapters.paper.commands`.
 
-The Phase 4 runtime uses in-memory match and duel-request state, `/duel` for request and lifecycle commands, and `matches.*` config defaults for request expiry, countdown, max duration, and spectator enablement.
+The Phase 4 runtime uses in-memory match and duel-request state, `/duel <player> <arena> <kit>` for normal requests, `/duel request <player> <arena> <kit>` when the target name collides with a subcommand, lifecycle subcommands for active duels, and `matches.*` config defaults for request expiry, countdown, max duration, and spectator enablement.
 
 ## Dependency Updates
 

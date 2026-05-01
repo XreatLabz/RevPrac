@@ -77,7 +77,7 @@ This log records accepted project decisions. Add new entries when a choice affec
 
 - Decision: Model Phase 4 as direct 1v1 duel requests plus a single match aggregate, not queueing, parties, or matchmaking.
 - Decision: Keep duel requests and active matches in memory for now through in-memory repositories; durable persistence is deferred to a later phase.
-- Decision: Expose the public match command surface through `/duel` for request, accept, deny/decline, cancel, spectate, and forfeit actions.
+- Decision: Expose the public match command surface through `/duel` for request, accept, deny/decline, cancel, spectate, and forfeit actions. Normal requests use `/duel <player> <arena> <kit>`, and the explicit `/duel request <player> <arena> <kit>` form exists for target names that collide with subcommands.
 - Decision: Use the Paper ticker as the deterministic source of countdown and timeout progression, with `MatchConfig` defaults of 30 seconds request expiry, 100 countdown ticks, 12000 max duration ticks, and spectators enabled.
 - Decision: Shutdown order closes duel intake, cancels the ticker, tears down matches, and then shuts down player sessions.
 - Decision: Keep richer event logging, metrics, block rollback, parties, rematch, post-match summaries, ranked progression, ratings, and stats outside the Phase 4 scope.

@@ -13,7 +13,7 @@ commands:
     permission-message: You do not have permission to use this command.
   duel:
     description: RevPrac duel request, accept, deny, cancel, spectate, and forfeit commands.
-    usage: /duel <player> <arena> <kit>|accept <player>|deny <player>|cancel <player>|spectate <player>|forfeit
+    usage: /duel <player> <arena> <kit>|request <player> <arena> <kit>|accept <player>|deny <player>|cancel <player>|spectate <player>|forfeit
     permission: revprac.duel
     permission-message: You do not have permission to use this command.
 permissions:

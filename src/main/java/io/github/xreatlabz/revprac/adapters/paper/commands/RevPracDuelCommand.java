@@ -15,6 +15,8 @@ import org.bukkit.entity.Player;
 public final class RevPracDuelCommand implements CommandExecutor {
 
     static final String DUEL_PERMISSION = "revprac.duel";
+    private static final String REQUEST_USAGE =
+            "Usage: /duel <player> <arena> <kit> or /duel request <player> <arena> <kit>";
 
     private final Server server;
     private final DuelRequestService duelRequestService;
@@ -43,14 +45,12 @@ public final class RevPracDuelCommand implements CommandExecutor {
 
         try {
             if (args.length == 0) {
-                player.sendMessage("Usage: /duel <player> <arena> <kit>");
+                player.sendMessage(REQUEST_USAGE);
                 return true;
-            }
-            if (args.length == 3) {
-                return handleRequest(player, args);
             }
 
             return switch (args[0].toLowerCase(java.util.Locale.ROOT)) {
+                case "request" -> handleExplicitRequest(player, args);
                 case "accept" -> handleAccept(player, args);
                 case "deny", "decline" -> handleDeny(player, args);
                 case "cancel" -> handleCancel(player, args);
@@ -66,7 +66,7 @@ public final class RevPracDuelCommand implements CommandExecutor {
 
     private boolean handleRequest(Player sender, String[] args) {
         if (args.length != 3) {
-            sender.sendMessage("Usage: /duel <player> <arena> <kit>");
+            sender.sendMessage(REQUEST_USAGE);
             return true;
         }
 
@@ -78,6 +78,15 @@ public final class RevPracDuelCommand implements CommandExecutor {
                 new KitId(args[2]));
         sender.sendMessage("Sent duel request to " + target.getName() + ".");
         return true;
+    }
+
+    private boolean handleExplicitRequest(Player sender, String[] args) {
+        if (args.length != 4) {
+            sender.sendMessage("Usage: /duel request <player> <arena> <kit>");
+            return true;
+        }
+
+        return handleRequest(sender, new String[] {args[1], args[2], args[3]});
     }
 
     private boolean handleAccept(Player sender, String[] args) {
