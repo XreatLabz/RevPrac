@@ -31,7 +31,9 @@ RevPrac currently has a minimal Paper plugin scaffold plus early practice regist
 - Player-session safety: `domain.players` owns immutable session/snapshot contracts; `application.players.PlayerSessionService` owns transitions, duplicate-join behavior, pending restorations, and shutdown recovery; `adapters.paper.players` owns Paper capture/restore and join/quit listener wiring.
 - Arena registry: `domain.arenas` owns arena IDs, bounds, spawn points, definitions, and reservation value objects; `application.arenas.ArenaRegistryService` owns deterministic registration, reservation, release, and reset-hook orchestration; `adapters.paper.arenas` owns YAML registry files and Paper reset logging.
 - Kit registry: `domain.kits` owns kit IDs, serialized inventory sections, potion effects, rules, and definitions; `application.kits.KitRegistryService` owns deterministic registration and enabled-kit listing; `adapters.paper.kits` owns Paper inventory/effect capture, apply, and YAML registry files.
-- Admin commands: `adapters.paper.commands.RevPracAdminCommand` owns `/revprac arena create <id> <radius>` and `/revprac kit save <id>` parsing, permission checks, player-only checks, and YAML-first persistence before runtime mutation.
+- Match engine: `domain.matches` owns duel requests, match IDs, participants, sides, rulesets, outcomes, end reasons, states, and lifecycle events; `application.matches` owns request intake, accept/deny/cancel, countdown, completion, teardown, spectator flow, and shutdown replay; `adapters.storage` owns in-memory match/request repositories; `adapters.paper.matches` owns the listener, ticker, and player preparation boundary.
+- Command surface: `adapters.paper.commands.RevPracAdminCommand` owns `/revprac arena create <id> <radius>` and `/revprac kit save <id>` parsing, permission checks, player-only checks, and YAML-first persistence before runtime mutation; `adapters.paper.commands.RevPracDuelCommand` owns `/duel` request, accept, deny/decline, cancel, spectate, and forfeit parsing through the Paper command layer.
+- Match config: `application.config.MatchConfig` owns `matches.duel-request-expiry-seconds`, `matches.countdown-ticks`, `matches.max-duration-ticks`, and `matches.spectators-enabled` with documented defaults from `config.yml`.
 - Tests: JUnit Jupiter and MockBukkit for plugin load/enable plus player-session adapter and lifecycle coverage.
 - Runtime check: `scripts/smoke-run-paper.sh` boots a real Paper 1.21.11 server and confirms RevPrac enables.
 
@@ -40,11 +42,10 @@ RevPrac currently has a minimal Paper plugin scaffold plus early practice regist
 - `arenas`: arena definitions, bounds, spawn points, validation, occupancy, and reset hooks.
 - `kits`: kit metadata, inventories, armor, effects, rules, and serialization.
 - `queues`: queue registration, matchmaking policy, ranked and unranked flow, and leave/rejoin behavior.
-- `matches`: match creation, countdowns, state transitions, win/loss handling, teardown, and recovery.
 - `players`: player profiles, session state, cooldowns, statistics, ratings, and persistence-facing models.
 - `commands`: player, staff, and admin command surfaces with permission checks.
 - `config-storage`: config loading, validation, migrations, and persistence adapters.
-- `integrations`: optional hooks for scoreboards, placeholders, tab, combat logs, parties, and external services.
+- `integrations`: optional hooks for scoreboards, placeholders, tab, combat logs, parties, rematch, post-match summaries, and external services.
 
 ## Boundary Rules
 
@@ -66,4 +67,4 @@ RevPrac currently has a minimal Paper plugin scaffold plus early practice regist
 
 ## Next Architecture Step
 
-The next code should build duel and match lifecycle behavior on top of the player-session safety, arena registry, and kit registry boundaries. Keep match rules testable without a live server, keep Paper adapters thin, and preserve in-memory registry/reservation assumptions until persistence is introduced.
+The next code should build queueing and ranked progression on top of the existing duel and match engine, not replace it. Keep match rules testable without a live server, keep Paper adapters thin, and preserve in-memory match/request assumptions until persistence is introduced.

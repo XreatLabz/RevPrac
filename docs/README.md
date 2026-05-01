@@ -20,4 +20,4 @@ This directory is the source of truth for RevPrac. `AGENTS.md` should stay short
 
 ## Current State
 
-RevPrac now has a minimal Paper 1.21.11 plugin scaffold with Gradle, tests, CI, a real Paper smoke harness, Phase 1 bootstrap/config contracts, Phase 2 player-session safety contracts, and Phase 3 arena/kit registry setup. Queue, match, durable storage, rating, and player-stat feature modules are still planned future phases.
+RevPrac now has a minimal Paper 1.21.11 plugin scaffold with Gradle, tests, CI, a real Paper smoke harness, Phase 1 bootstrap/config contracts, Phase 2 player-session safety contracts, Phase 3 arena/kit registry setup, and Phase 4 duel/match engine contracts and adapters. Queueing, ranked progression, durable storage, rating, stats, parties, rematch, and post-match summary feature modules are still planned future phases.
