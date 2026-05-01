@@ -15,7 +15,11 @@ import io.github.xreatlabz.revprac.domain.kits.KitDefinition;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -228,12 +232,99 @@ final class RevPracAdminCommandTest {
                 .toList());
     }
 
+    @Test
+    void overlappingArenaCreatesKeepYamlAndRuntimeInSync() throws Exception {
+        ServerMock server = MockBukkit.mock();
+        WorldMock world = addKeyedWorld(server, "arena-race-world");
+        RevPracPlugin plugin = MockBukkit.load(RevPracPlugin.class);
+        PlayerMock player = server.addPlayer("arena-race-admin");
+        player.setOp(true);
+        player.teleport(new Location(world, 0.0d, 64.0d, 0.0d));
+        PluginCommand command = server.getPluginCommand("revprac");
+        BlockingPersistenceHooks hooks = new BlockingPersistenceHooks();
+        RevPracAdminCommand adminCommand = new RevPracAdminCommand(runtime(plugin), new io.github.xreatlabz.revprac.adapters.paper.kits.PaperKitLoadoutAdapter(), hooks);
+
+        List<Throwable> failures = new ArrayList<>();
+        CountDownLatch done = new CountDownLatch(2);
+        Thread first = new Thread(
+                () -> invokeCommand(adminCommand, player, command, failures, done, "arena", "create", "bridge", "8"),
+                "arena-create-bridge");
+        Thread second = new Thread(
+                () -> invokeCommand(adminCommand, player, command, failures, done, "arena", "create", "node", "8"),
+                "arena-create-node");
+
+        first.start();
+        assertTrue(hooks.firstStageReached.await(1, TimeUnit.SECONDS), "First arena create should reach the staged save window");
+        second.start();
+        hooks.allowFirstSave.countDown();
+
+        assertTrue(done.await(2, TimeUnit.SECONDS), "Both arena create commands should finish");
+        assertEquals(List.of(), failures);
+        assertEquals(
+                List.of("bridge", "node"),
+                arenaService(plugin).arenas().stream().map(arena -> arena.id().value()).toList());
+        assertEquals(
+                List.of("bridge", "node"),
+                new PaperArenaRegistryFiles(plugin.getDataFolder().toPath()).load().stream()
+                        .map(arena -> arena.id().value())
+                        .toList());
+    }
+
+    @Test
+    void overlappingKitSavesKeepYamlAndRuntimeInSync() throws Exception {
+        ServerMock server = MockBukkit.mock();
+        server.addSimpleWorld("kit-race-world");
+        RevPracPlugin plugin = MockBukkit.load(RevPracPlugin.class);
+        PlayerMock player = server.addPlayer("kit-race-admin");
+        player.setOp(true);
+        player.getInventory().setItem(0, new org.bukkit.inventory.ItemStack(Material.DIAMOND_SWORD, 1));
+        player.getInventory().setItem(1, new org.bukkit.inventory.ItemStack(Material.GOLDEN_APPLE, 4));
+        PluginCommand command = server.getPluginCommand("revprac");
+        BlockingPersistenceHooks hooks = new BlockingPersistenceHooks();
+        RevPracAdminCommand adminCommand = new RevPracAdminCommand(runtime(plugin), new io.github.xreatlabz.revprac.adapters.paper.kits.PaperKitLoadoutAdapter(), hooks);
+
+        List<Throwable> failures = new ArrayList<>();
+        CountDownLatch done = new CountDownLatch(2);
+        Thread first = new Thread(
+                () -> invokeCommand(adminCommand, player, command, failures, done, "kit", "save", "nodebuff"),
+                "kit-save-nodebuff");
+        Thread second = new Thread(
+                () -> invokeCommand(adminCommand, player, command, failures, done, "kit", "save", "sumo"),
+                "kit-save-sumo");
+
+        first.start();
+        assertTrue(hooks.firstStageReached.await(1, TimeUnit.SECONDS), "First kit save should reach the staged save window");
+        second.start();
+        hooks.allowFirstSave.countDown();
+
+        assertTrue(done.await(2, TimeUnit.SECONDS), "Both kit save commands should finish");
+        assertEquals(List.of(), failures);
+        assertEquals(
+                List.of("nodebuff", "sumo"),
+                kitService(plugin).kits().stream().map(kit -> kit.id().value()).toList());
+        assertEquals(
+                List.of("nodebuff", "sumo"),
+                new PaperKitRegistryFiles(plugin.getDataFolder().toPath()).load().stream()
+                        .map(kit -> kit.id().value())
+                        .toList());
+    }
+
     private static ArenaRegistryService arenaService(RevPracPlugin plugin) {
         return (ArenaRegistryService) runtimeField(plugin, "arenaRegistryService");
     }
 
     private static KitRegistryService kitService(RevPracPlugin plugin) {
         return (KitRegistryService) runtimeField(plugin, "kitRegistryService");
+    }
+
+    private static BootstrapRuntime runtime(RevPracPlugin plugin) {
+        try {
+            Field runtimeField = RevPracPlugin.class.getDeclaredField("runtime");
+            runtimeField.setAccessible(true);
+            return (BootstrapRuntime) runtimeField.get(plugin);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("Could not access runtime", exception);
+        }
     }
 
     private static Object runtimeField(RevPracPlugin plugin, String fieldName) {
@@ -262,6 +353,24 @@ final class RevPracAdminCommandTest {
         }
     }
 
+    private static void invokeCommand(
+            RevPracAdminCommand command,
+            PlayerMock player,
+            PluginCommand pluginCommand,
+            List<Throwable> failures,
+            CountDownLatch done,
+            String... args) {
+        try {
+            command.onCommand(player, pluginCommand, "revprac", args);
+        } catch (Throwable throwable) {
+            synchronized (failures) {
+                failures.add(throwable);
+            }
+        } finally {
+            done.countDown();
+        }
+    }
+
     private static WorldMock addKeyedWorld(ServerMock server, String worldName) {
         WorldMock world = new KeyedWorldMock(worldName);
         server.addWorld(world);
@@ -280,6 +389,36 @@ final class RevPracAdminCommandTest {
         @Override
         public NamespacedKey getKey() {
             return key;
+        }
+    }
+
+    private static final class BlockingPersistenceHooks implements RevPracAdminCommand.PersistenceHooks {
+
+        private final AtomicInteger stageCalls = new AtomicInteger();
+        private final CountDownLatch firstStageReached = new CountDownLatch(1);
+        private final CountDownLatch allowFirstSave = new CountDownLatch(1);
+
+        @Override
+        public void afterArenaStage(ArenaDefinition arenaDefinition, List<ArenaDefinition> stagedArenas) {
+            blockFirstStageOnly();
+        }
+
+        @Override
+        public void afterKitStage(KitDefinition kitDefinition, List<KitDefinition> stagedKits) {
+            blockFirstStageOnly();
+        }
+
+        private void blockFirstStageOnly() {
+            if (stageCalls.getAndIncrement() != 0) {
+                return;
+            }
+            firstStageReached.countDown();
+            try {
+                assertTrue(allowFirstSave.await(1, TimeUnit.SECONDS), "Test should release the first save");
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted while waiting to release the first save", exception);
+            }
         }
     }
 }

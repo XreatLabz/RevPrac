@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -25,10 +26,18 @@ public final class RevPracAdminCommand implements CommandExecutor {
 
     private final BootstrapRuntime runtime;
     private final PaperKitLoadoutAdapter kitLoadoutAdapter;
+    private final ReentrantLock persistenceLock;
+    private final PersistenceHooks persistenceHooks;
 
     public RevPracAdminCommand(BootstrapRuntime runtime, PaperKitLoadoutAdapter kitLoadoutAdapter) {
+        this(runtime, kitLoadoutAdapter, PersistenceHooks.NO_OP);
+    }
+
+    RevPracAdminCommand(BootstrapRuntime runtime, PaperKitLoadoutAdapter kitLoadoutAdapter, PersistenceHooks persistenceHooks) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.kitLoadoutAdapter = Objects.requireNonNull(kitLoadoutAdapter, "kitLoadoutAdapter");
+        this.persistenceHooks = Objects.requireNonNull(persistenceHooks, "persistenceHooks");
+        this.persistenceLock = new ReentrantLock();
     }
 
     @Override
@@ -89,9 +98,15 @@ public final class RevPracAdminCommand implements CommandExecutor {
                 spawn,
                 true);
 
-        List<ArenaDefinition> stagedArenas = stageArenaDefinitions(arenaDefinition);
-        saveArenas(stagedArenas);
-        runtime.arenaRegistryService().register(arenaDefinition);
+        persistenceLock.lock();
+        try {
+            List<ArenaDefinition> stagedArenas = stageArenaDefinitions(arenaDefinition);
+            persistenceHooks.afterArenaStage(arenaDefinition, stagedArenas);
+            saveArenas(stagedArenas);
+            runtime.arenaRegistryService().register(arenaDefinition);
+        } finally {
+            persistenceLock.unlock();
+        }
         sender.sendMessage("Saved arena " + arenaDefinition.id().value() + ".");
         return true;
     }
@@ -110,9 +125,15 @@ public final class RevPracAdminCommand implements CommandExecutor {
                 new KitRules(false, false, true, false),
                 true);
 
-        List<KitDefinition> stagedKits = stageKitDefinitions(kitDefinition);
-        saveKits(stagedKits);
-        runtime.kitRegistryService().register(kitDefinition);
+        persistenceLock.lock();
+        try {
+            List<KitDefinition> stagedKits = stageKitDefinitions(kitDefinition);
+            persistenceHooks.afterKitStage(kitDefinition, stagedKits);
+            saveKits(stagedKits);
+            runtime.kitRegistryService().register(kitDefinition);
+        } finally {
+            persistenceLock.unlock();
+        }
         sender.sendMessage("Saved kit " + kitDefinition.id().value() + ".");
         return true;
     }
@@ -174,5 +195,14 @@ public final class RevPracAdminCommand implements CommandExecutor {
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to save kits.yml.", exception);
         }
+    }
+
+    interface PersistenceHooks {
+
+        PersistenceHooks NO_OP = new PersistenceHooks() {};
+
+        default void afterArenaStage(ArenaDefinition arenaDefinition, List<ArenaDefinition> stagedArenas) {}
+
+        default void afterKitStage(KitDefinition kitDefinition, List<KitDefinition> stagedKits) {}
     }
 }

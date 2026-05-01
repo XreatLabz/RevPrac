@@ -188,8 +188,9 @@ final class ArenaRegistryServiceTest {
         assertEquals("reset failed", exception.getMessage());
         assertEquals(1, harness.resetPort.resetCalls.size(), "Release should still attempt reset once");
 
-        Object nextReservation = harness.reserve("bridge", "match:queue-2");
-        assertEquals("match:queue-2", recordComponentValue(nextReservation, "ownerKey"));
+        IllegalStateException reserveFailure =
+                assertThrows(IllegalStateException.class, () -> harness.reserve("bridge", "match:queue-2"));
+        assertEquals("Arena is already reserved: bridge", reserveFailure.getMessage());
     }
 
     @Test
@@ -227,8 +228,9 @@ final class ArenaRegistryServiceTest {
         IllegalStateException resetFailure = assertInstanceOf(IllegalStateException.class, releaseFailure[0]);
         assertEquals("reset failed", resetFailure.getMessage());
 
-        Object nextReservation = harness.reserve("bridge", "match:after-failed-reset");
-        assertEquals("match:after-failed-reset", recordComponentValue(nextReservation, "ownerKey"));
+        IllegalStateException reserveFailure =
+                assertThrows(IllegalStateException.class, () -> harness.reserve("bridge", "match:after-failed-reset"));
+        assertEquals("Arena is already reserved: bridge", reserveFailure.getMessage());
     }
 
     @Test

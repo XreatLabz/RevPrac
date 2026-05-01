@@ -65,11 +65,11 @@ public final class ArenaRegistryService {
             if (!arenaDefinition.enabled()) {
                 throw new IllegalStateException("Arena is disabled: " + arenaId.value());
             }
-            if (reservationsByArenaId.containsKey(arenaId)) {
-                throw new IllegalStateException("Arena is already reserved: " + arenaId.value());
-            }
             if (resettingArenaIds.contains(arenaId)) {
                 throw new IllegalStateException("Arena is resetting: " + arenaId.value());
+            }
+            if (reservationsByArenaId.containsKey(arenaId)) {
+                throw new IllegalStateException("Arena is already reserved: " + arenaId.value());
             }
 
             ArenaReservation reservation =
@@ -86,19 +86,22 @@ public final class ArenaRegistryService {
         Objects.requireNonNull(reservationId, "reservationId");
 
         ArenaDefinition arenaDefinitionToReset;
+        ArenaReservation reservationToRelease;
         ArenaId arenaIdToReset;
         mutationLock.lock();
         try {
-            ArenaReservation reservation = activeReservations.remove(reservationId);
-            if (reservation == null) {
+            reservationToRelease = activeReservations.get(reservationId);
+            if (reservationToRelease == null) {
                 throw new IllegalStateException("Unknown reservation: " + reservationId.value());
             }
 
-            arenaIdToReset = reservation.arenaId();
+            arenaIdToReset = reservationToRelease.arenaId();
+            if (resettingArenaIds.contains(arenaIdToReset)) {
+                throw new IllegalStateException("Arena is resetting: " + arenaIdToReset.value());
+            }
             arenaDefinitionToReset = arenaRegistryRepository.find(arenaIdToReset)
                     .orElseThrow(() -> new IllegalStateException(
                             "Arena is not registered: " + arenaIdToReset.value()));
-            reservationsByArenaId.remove(arenaIdToReset);
             resettingArenaIds.add(arenaIdToReset);
         } finally {
             mutationLock.unlock();
@@ -106,13 +109,22 @@ public final class ArenaRegistryService {
 
         try {
             arenaResetPort.reset(arenaDefinitionToReset);
-        } finally {
+            mutationLock.lock();
+            try {
+                activeReservations.remove(reservationId);
+                reservationsByArenaId.remove(arenaIdToReset, reservationId);
+                resettingArenaIds.remove(arenaIdToReset);
+            } finally {
+                mutationLock.unlock();
+            }
+        } catch (RuntimeException exception) {
             mutationLock.lock();
             try {
                 resettingArenaIds.remove(arenaIdToReset);
             } finally {
                 mutationLock.unlock();
             }
+            throw exception;
         }
     }
 }
