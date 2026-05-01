@@ -238,6 +238,16 @@ final class PaperArenaRegistryFilesTest {
     }
 
     @Test
+    void malformedYamlSyntaxFailsFast() throws Exception {
+        Files.writeString(tempDir.resolve("arenas.yml"), "arenas:\n  - id: [unterminated\n");
+
+        PaperArenaRegistryFiles files = new PaperArenaRegistryFiles(tempDir);
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, files::load);
+        assertTrue(exception.getMessage().contains("Invalid YAML in"));
+    }
+
+    @Test
     void decimalArenaBoundsFailWithFieldPath() throws Exception {
         Files.writeString(
                 tempDir.resolve("arenas.yml"),

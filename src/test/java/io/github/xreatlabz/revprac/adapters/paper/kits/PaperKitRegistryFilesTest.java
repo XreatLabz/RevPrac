@@ -240,6 +240,16 @@ final class PaperKitRegistryFilesTest {
     }
 
     @Test
+    void malformedYamlSyntaxFailsFast() throws Exception {
+        Files.writeString(tempDir.resolve("kits.yml"), "kits:\n  - id: [unterminated\n");
+
+        PaperKitRegistryFiles files = new PaperKitRegistryFiles(tempDir);
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, files::load);
+        assertTrue(exception.getMessage().contains("Invalid YAML in"));
+    }
+
+    @Test
     void invalidItemPayloadFailsWithYamlPath() throws Exception {
         List<String> storage = section(PLAYER_STORAGE_SIZE, Map.of(0, "AQIDBA=="));
 

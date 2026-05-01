@@ -81,7 +81,7 @@ public final class PaperKitRegistryFiles {
 
     private static YamlConfiguration loadConfiguration(Path registryFile) {
         try {
-            YamlConfiguration configuration = YamlConfiguration.loadConfiguration(registryFile.toFile());
+            YamlConfiguration configuration = new YamlConfiguration();
             configuration.load(registryFile.toFile());
             return configuration;
         } catch (IOException exception) {

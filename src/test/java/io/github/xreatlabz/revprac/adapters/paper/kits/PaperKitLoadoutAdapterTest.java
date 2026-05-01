@@ -205,6 +205,37 @@ final class PaperKitLoadoutAdapterTest {
     }
 
     @Test
+    void oversizedSectionWithInvalidPayloadFailsOnSizeBeforeDecoding() {
+        ServerMock server = MockBukkit.mock();
+        PlayerMock player = server.addPlayer("apply-player");
+        ItemStack[] baselineStorage = new ItemStack[player.getInventory().getStorageContents().length];
+        baselineStorage[0] = stack(Material.STONE_SWORD, 1);
+        player.getInventory().setStorageContents(baselineStorage);
+        player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 100, 0, false, true, true));
+
+        List<String> oversizedStorage = new ArrayList<>(emptySection(PLAYER_STORAGE_SIZE));
+        oversizedStorage.add("%%%not-base64%%%");
+        KitDefinition invalid = new KitDefinition(
+                new KitId("oversized-storage"),
+                "OversizedStorage",
+                new KitInventory(
+                        Collections.unmodifiableList(new ArrayList<>(oversizedStorage)),
+                        emptySection(PLAYER_ARMOR_SIZE),
+                        emptySection(PLAYER_EXTRA_SIZE),
+                        0),
+                List.of(new KitPotionEffect("minecraft:regeneration", 100, 0, false, true, true)),
+                new KitRules(false, false, true, false),
+                true);
+
+        PaperKitLoadoutAdapter adapter = new PaperKitLoadoutAdapter();
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> adapter.apply(player, invalid));
+        assertTrue(exception.getMessage().contains("storage must contain exactly"));
+        assertArrayEquals(baselineStorage, player.getInventory().getStorageContents());
+        assertPotionEffectsEqual(List.of(new PotionEffect(PotionEffectType.SPEED, 100, 0, false, true, true)), player);
+    }
+
+    @Test
     void unknownPotionEffectKeyLeavesExistingInventoryAndEffectsUnchanged() {
         ServerMock server = MockBukkit.mock();
         PlayerMock player = server.addPlayer("apply-player");

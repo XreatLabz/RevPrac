@@ -46,16 +46,17 @@ public final class PaperKitLoadoutAdapter {
         Objects.requireNonNull(player, "player");
         Objects.requireNonNull(definition, "definition");
 
+        PlayerInventory inventory = player.getInventory();
+        requireSectionLength(definition.inventory().storage(), inventory.getStorageContents().length, "storage");
+        requireSectionLength(definition.inventory().armor(), inventory.getArmorContents().length, "armor");
+        requireSectionLength(definition.inventory().extra(), inventory.getExtraContents().length, "extra");
+
         ItemStack[] storageContents = deserializeItems(definition.inventory().storage(), "storage");
         ItemStack[] armorContents = deserializeItems(definition.inventory().armor(), "armor");
         ItemStack[] extraContents = deserializeItems(definition.inventory().extra(), "extra");
         List<PotionEffect> potionEffects = definition.potionEffects().stream()
                 .map(PaperKitLoadoutAdapter::restoreEffect)
                 .toList();
-        PlayerInventory inventory = player.getInventory();
-        requireSectionLength(storageContents, inventory.getStorageContents().length, "storage");
-        requireSectionLength(armorContents, inventory.getArmorContents().length, "armor");
-        requireSectionLength(extraContents, inventory.getExtraContents().length, "extra");
 
         player.closeInventory();
         inventory.setStorageContents(storageContents);
@@ -135,10 +136,10 @@ public final class PaperKitLoadoutAdapter {
         }
     }
 
-    private static void requireSectionLength(ItemStack[] items, int expectedSize, String section) {
-        if (items.length != expectedSize) {
+    private static void requireSectionLength(List<String> items, int expectedSize, String section) {
+        if (items.size() != expectedSize) {
             throw new IllegalArgumentException(
-                    section + " must contain exactly " + expectedSize + " entries but had " + items.length);
+                    section + " must contain exactly " + expectedSize + " entries but had " + items.size());
         }
     }
 }
