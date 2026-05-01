@@ -27,7 +27,7 @@ public class RevPracPlugin extends JavaPlugin {
             try {
                 runtime.shutdown();
             } catch (RuntimeException exception) {
-                getLogger().log(Level.SEVERE, "RevPrac player-session shutdown failed.", exception);
+                getLogger().log(Level.SEVERE, "RevPrac runtime shutdown failed.", exception);
             } finally {
                 runtime = null;
             }

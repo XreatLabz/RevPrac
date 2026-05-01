@@ -11,7 +11,15 @@ commands:
     usage: /revprac <arena|kit> ...
     permission: revprac.admin
     permission-message: You do not have permission to use this command.
+  duel:
+    description: RevPrac duel request, accept, deny, cancel, spectate, and forfeit commands.
+    usage: /duel <player> <arena> <kit>|accept <player>|deny <player>|cancel <player>|spectate <player>|forfeit
+    permission: revprac.duel
+    permission-message: You do not have permission to use this command.
 permissions:
   revprac.admin:
     description: Allows RevPrac arena and kit setup commands.
     default: op
+  revprac.duel:
+    description: Allows RevPrac duel and spectate commands.
+    default: true

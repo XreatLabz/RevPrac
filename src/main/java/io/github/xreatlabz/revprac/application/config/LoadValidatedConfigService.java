@@ -52,10 +52,52 @@ public final class LoadValidatedConfigService {
                     "diagnostics.verbose-lifecycle-logs");
         }
 
+        if (hasMalformedMatchesParent(source)) {
+            return err("configuration.invalid-type", "Expected a configuration section at matches", "matches");
+        }
+
+        ParsedPositiveInt duelRequestExpirySeconds = readPositiveIntWithDefault(
+                source,
+                "matches.duel-request-expiry-seconds",
+                MatchConfig.DEFAULT_DUEL_REQUEST_EXPIRY_SECONDS);
+        if (!duelRequestExpirySeconds.valid()) {
+            return err(duelRequestExpirySeconds.code(), duelRequestExpirySeconds.message(), duelRequestExpirySeconds.path());
+        }
+
+        ParsedPositiveInt countdownTicks = readPositiveIntWithDefault(
+                source,
+                "matches.countdown-ticks",
+                MatchConfig.DEFAULT_COUNTDOWN_TICKS);
+        if (!countdownTicks.valid()) {
+            return err(countdownTicks.code(), countdownTicks.message(), countdownTicks.path());
+        }
+
+        ParsedPositiveInt maxDurationTicks = readPositiveIntWithDefault(
+                source,
+                "matches.max-duration-ticks",
+                MatchConfig.DEFAULT_MAX_DURATION_TICKS);
+        if (!maxDurationTicks.valid()) {
+            return err(maxDurationTicks.code(), maxDurationTicks.message(), maxDurationTicks.path());
+        }
+
+        Boolean spectatorsEnabled =
+                readBooleanWithDefault(source, "matches.spectators-enabled", MatchConfig.DEFAULT_SPECTATORS_ENABLED);
+        if (spectatorsEnabled == null) {
+            return err(
+                    "configuration.invalid-type",
+                    "Expected a boolean at matches.spectators-enabled",
+                    "matches.spectators-enabled");
+        }
+
         RevPracConfig config = new RevPracConfig(
                 configVersion,
                 new BootstrapConfig(failFastOnEnable),
-                new DiagnosticsConfig(verboseLifecycleLogs));
+                new DiagnosticsConfig(verboseLifecycleLogs),
+                new MatchConfig(
+                        duelRequestExpirySeconds.value(),
+                        countdownTicks.value(),
+                        maxDurationTicks.value(),
+                        spectatorsEnabled));
         return new Ok<>(config);
     }
 
@@ -77,6 +119,59 @@ public final class LoadValidatedConfigService {
         return new LookupValue(false, null);
     }
 
+    private ParsedPositiveInt readPositiveIntWithDefault(ConfigSource source, String path, int defaultValue) {
+        LookupValue value = read(source, path);
+        if (!value.present()) {
+            return new ParsedPositiveInt(true, defaultValue, null, null, path);
+        }
+        if (!(value.value() instanceof Number number)) {
+            return new ParsedPositiveInt(
+                    false,
+                    null,
+                    "configuration.invalid-type",
+                    "Expected a positive integer at " + path,
+                    path);
+        }
+
+        double doubleValue = number.doubleValue();
+        if (Math.floor(doubleValue) != doubleValue
+                || doubleValue > Integer.MAX_VALUE
+                || doubleValue < Integer.MIN_VALUE) {
+            return new ParsedPositiveInt(
+                    false,
+                    null,
+                    "configuration.invalid-type",
+                    "Expected a positive integer at " + path,
+                    path);
+        }
+
+        int intValue = number.intValue();
+        if (intValue <= 0) {
+            return new ParsedPositiveInt(
+                    false,
+                    null,
+                    "configuration.invalid-value",
+                    "Expected a positive integer at " + path,
+                    path);
+        }
+
+        return new ParsedPositiveInt(true, intValue, null, null, path);
+    }
+
+    private boolean hasMalformedMatchesParent(ConfigSource source) {
+        LookupValue matchesValue = read(source, "matches");
+        return matchesValue.present() && isScalarConfigValue(matchesValue.value());
+    }
+
+    private boolean isScalarConfigValue(Object value) {
+        return value == null
+                || value instanceof CharSequence
+                || value instanceof Number
+                || value instanceof Boolean
+                || value instanceof Character
+                || value instanceof Enum<?>;
+    }
+
     private Result<RevPracConfig> err(String code, String message, String path) {
         return new Err<>(problem(code, message, path));
     }
@@ -86,5 +181,8 @@ public final class LoadValidatedConfigService {
     }
 
     private record LookupValue(boolean present, Object value) {
+    }
+
+    private record ParsedPositiveInt(boolean valid, Integer value, String code, String message, String path) {
     }
 }
