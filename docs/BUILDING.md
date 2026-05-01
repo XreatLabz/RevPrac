@@ -83,6 +83,27 @@ The import check should return no matches. Arena and kit domain/application logi
 
 Operator-managed registry files are `arenas.yml` and `kits.yml` in the plugin data folder. Bad registry content should fail startup through the existing bootstrap failure path.
 
+## Phase 4 Duel and Match Engine
+
+For duel and match work, run the focused pure-domain, application-service, storage, Paper-adapter, command, and config/bootstrap tests before the full gate:
+
+```bash
+./gradlew test --tests '*DuelRequestServiceTest' --tests '*MatchLifecycleServiceTest' --tests '*InMemoryDuelRequestRepositoryTest' --tests '*InMemoryMatchRepositoryTest'
+./gradlew test --tests '*PaperMatchLifecycleListenerTest' --tests '*PaperMatchPlayerAdapterTest' --tests '*PaperMatchTickerTest' --tests '*RevPracDuelCommandTest'
+./gradlew test --tests '*LoadValidatedConfigServiceContractTest' --tests '*RevPracPluginPhase4Test'
+```
+
+Boundary checks:
+
+```bash
+rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java/io/github/xreatlabz/revprac/application/matches src/main/java/io/github/xreatlabz/revprac/domain/matches src/main/java/io/github/xreatlabz/revprac/ports/matches src/main/java/io/github/xreatlabz/revprac/adapters/storage
+rg -n "domain\\.matches|application\\.matches|ports\\.matches|adapters\\.paper\\.matches|RevPracDuelCommand|MatchConfig|BootstrapRuntime|RevPracBootstrap|plugin.yml|config.yml" src/main/java src/main/resources
+```
+
+The import check should return no matches in application, domain, ports, or storage. Match lifecycle logic belongs under `domain.matches` and `application.matches`; Paper event handling, ticker scheduling, and command parsing belong under `adapters.paper.matches` and `adapters.paper.commands`.
+
+The Phase 4 runtime uses in-memory match and duel-request state, `/duel <player> <arena> <kit>` for normal requests, `/duel request <player> <arena> <kit>` when the target name collides with a subcommand, lifecycle subcommands for active duels, and `matches.*` config defaults for request expiry, countdown, max duration, and spectator enablement.
+
 ## Dependency Updates
 
 Dependency versions live in `gradle/libs.versions.toml`.

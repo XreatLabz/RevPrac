@@ -38,7 +38,7 @@ RevPrac currently has:
 
 Current repo shape is intentionally small:
 
-- arena and kit registry groundwork exists; queue, match, rating, and durable persistence feature modules are still planned
+- arena and kit registry groundwork exists; the direct duel and match engine is implemented; queue, ranked progression, rating, stats, and durable persistence feature modules are still planned
 - no Gradle subprojects yet
 - no public plugin API surface yet
 
@@ -225,11 +225,29 @@ Validation:
 
 ### Phase 4: Duel and Match Engine
 
-Status: Planned
+Status: Implemented
 
 Goal:
 
-- implement duel requests, countdowns, match aggregate state, win/loss/forfeit/timeout handling, spectator flow, teardown, and domain events
+- implement direct 1v1 duel requests, countdowns, a match aggregate, win/death/forfeit/timeout handling, spectator flow, teardown, and domain events
+
+Implemented scope:
+
+- `domain.matches` contracts for duel request IDs/state, match IDs, participants, sides, rulesets, outcomes, end reasons, aggregate transitions, and lifecycle events
+- `application.matches.DuelRequestService` for request, accept, deny, cancel, duplicate-pending checks, expiry, and intake closure
+- `application.matches.MatchLifecycleService` for countdown ticking, match start/completion, death/forfeit/quit/timeout/shutdown completion paths, spectator join/leave, teardown, and event publishing
+- `ports.matches` for match/request repository and match-player adapter boundaries
+- `adapters.storage` in-memory match and duel-request repositories that keep active request and match state in memory
+- `adapters.paper.matches` listener, ticker, and player-prep adapters that enforce countdown freeze, spectator protections, death/quit handling, and per-tick progression
+- `/duel <player> <arena> <kit>` plus explicit `/duel request <player> <arena> <kit>` request forms, with accept, deny/decline, cancel, spectate, and forfeit command surface
+- `application.config.MatchConfig` defaults and bootstrap wiring for duel-request expiry, countdown length, max duration, and spectator toggles
+
+Phase boundary:
+
+- queueing, matchmaking, ranked progression, ratings, stats, parties, rematch, post-match summaries, and durable persistence stay future
+- match/request state stays in memory for now; durable storage comes later
+- arena reset remains a port boundary; block rollback or arena restoration is deferred to the phase that owns teardown recovery
+- domain event emission is in scope; richer event logging or metrics are not
 
 Exit criteria:
 
@@ -241,7 +259,11 @@ Exit criteria:
 Validation:
 
 ```bash
-./gradlew test
+./gradlew test --tests '*DuelRequestServiceTest' --tests '*MatchLifecycleServiceTest' --tests '*InMemoryDuelRequestRepositoryTest' --tests '*InMemoryMatchRepositoryTest'
+./gradlew test --tests '*PaperMatchLifecycleListenerTest' --tests '*PaperMatchPlayerAdapterTest' --tests '*PaperMatchTickerTest' --tests '*RevPracDuelCommandTest'
+./gradlew test --tests '*LoadValidatedConfigServiceContractTest' --tests '*RevPracPluginPhase4Test'
+rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java/io/github/xreatlabz/revprac/application/matches src/main/java/io/github/xreatlabz/revprac/domain/matches src/main/java/io/github/xreatlabz/revprac/ports/matches src/main/java/io/github/xreatlabz/revprac/adapters/storage
+rg -n "domain\\.matches|application\\.matches|ports\\.matches|adapters\\.paper\\.matches|RevPracDuelCommand|MatchConfig|BootstrapRuntime|RevPracBootstrap|plugin.yml|config.yml" src/main/java src/main/resources
 ./gradlew spotlessCheck test jacocoTestReport jar
 ./scripts/smoke-run-paper.sh
 ```

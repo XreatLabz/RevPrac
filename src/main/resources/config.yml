@@ -3,3 +3,8 @@ bootstrap:
   fail-fast-on-enable: true
 diagnostics:
   verbose-lifecycle-logs: false
+matches:
+  duel-request-expiry-seconds: 30
+  countdown-ticks: 100
+  max-duration-ticks: 12000
+  spectators-enabled: true

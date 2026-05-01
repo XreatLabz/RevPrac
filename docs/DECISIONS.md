@@ -72,3 +72,13 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: Admin setup commands persist YAML before mutating runtime registry state, so save failures do not desynchronize memory from disk.
 - Decision: Arena setup stores namespaced Paper world keys instead of raw world names.
 - Rationale: Phase 3 needs operator-editable content and safe setup flows without introducing persistence, NMS, or match-engine complexity before later roadmap phases.
+
+## 2026-05-01: Phase 4 Direct Duel and Match Engine Boundary
+
+- Decision: Model Phase 4 as direct 1v1 duel requests plus a single match aggregate, not queueing, parties, or matchmaking.
+- Decision: Keep duel requests and active matches in memory for now through in-memory repositories; durable persistence is deferred to a later phase.
+- Decision: Expose the public match command surface through `/duel` for request, accept, deny/decline, cancel, spectate, and forfeit actions. Normal requests use `/duel <player> <arena> <kit>`, and the explicit `/duel request <player> <arena> <kit>` form exists for target names that collide with subcommands.
+- Decision: Use the Paper ticker as the deterministic source of countdown and timeout progression, with `MatchConfig` defaults of 30 seconds request expiry, 100 countdown ticks, 12000 max duration ticks, and spectators enabled.
+- Decision: Shutdown order closes duel intake, cancels the ticker, tears down matches, and then shuts down player sessions.
+- Decision: Keep richer event logging, metrics, block rollback, parties, rematch, post-match summaries, ranked progression, ratings, and stats outside the Phase 4 scope.
+- Rationale: Phase 4 should deliver a safe, testable duel engine with clear lifecycle boundaries before queueing, persistence, and broader competitive progression are introduced.
