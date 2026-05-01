@@ -10,6 +10,8 @@ import io.github.xreatlabz.revprac.domain.kits.KitDefinition;
 import io.github.xreatlabz.revprac.domain.kits.KitId;
 import io.github.xreatlabz.revprac.domain.kits.KitRules;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import org.bukkit.Location;
 import org.bukkit.command.Command;
@@ -64,7 +66,7 @@ public final class RevPracAdminCommand implements CommandExecutor {
         Player player = requirePlayer(sender, "/revprac arena create");
         int radius = parseRadius(args[3]);
         Location location = player.getLocation();
-        String worldKey = player.getWorld().getName();
+        String worldKey = player.getWorld().getKey().asString();
         ArenaSpawnPoint spawn = new ArenaSpawnPoint(
                 worldKey,
                 location.getX(),
@@ -87,8 +89,9 @@ public final class RevPracAdminCommand implements CommandExecutor {
                 spawn,
                 true);
 
+        List<ArenaDefinition> stagedArenas = stageArenaDefinitions(arenaDefinition);
+        saveArenas(stagedArenas);
         runtime.arenaRegistryService().register(arenaDefinition);
-        saveArenas();
         sender.sendMessage("Saved arena " + arenaDefinition.id().value() + ".");
         return true;
     }
@@ -107,8 +110,9 @@ public final class RevPracAdminCommand implements CommandExecutor {
                 new KitRules(false, false, true, false),
                 true);
 
+        List<KitDefinition> stagedKits = stageKitDefinitions(kitDefinition);
+        saveKits(stagedKits);
         runtime.kitRegistryService().register(kitDefinition);
-        saveKits();
         sender.sendMessage("Saved kit " + kitDefinition.id().value() + ".");
         return true;
     }
@@ -134,17 +138,39 @@ public final class RevPracAdminCommand implements CommandExecutor {
         return radius;
     }
 
-    private void saveArenas() {
+    private List<ArenaDefinition> stageArenaDefinitions(ArenaDefinition arenaDefinition) {
+        List<ArenaDefinition> currentArenas = runtime.arenaRegistryService().arenas();
+        if (currentArenas.stream().anyMatch(existingArena -> existingArena.id().equals(arenaDefinition.id()))) {
+            throw new IllegalArgumentException("Arena already exists: " + arenaDefinition.id().value());
+        }
+
+        List<ArenaDefinition> stagedArenas = new ArrayList<>(currentArenas);
+        stagedArenas.add(arenaDefinition);
+        return List.copyOf(stagedArenas);
+    }
+
+    private List<KitDefinition> stageKitDefinitions(KitDefinition kitDefinition) {
+        List<KitDefinition> currentKits = runtime.kitRegistryService().kits();
+        if (currentKits.stream().anyMatch(existingKit -> existingKit.id().equals(kitDefinition.id()))) {
+            throw new IllegalArgumentException("Kit already exists: " + kitDefinition.id().value());
+        }
+
+        List<KitDefinition> stagedKits = new ArrayList<>(currentKits);
+        stagedKits.add(kitDefinition);
+        return List.copyOf(stagedKits);
+    }
+
+    private void saveArenas(List<ArenaDefinition> stagedArenas) {
         try {
-            runtime.arenaRegistryFiles().save(runtime.arenaRegistryService().arenas());
+            runtime.arenaRegistryFiles().save(stagedArenas);
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to save arenas.yml.", exception);
         }
     }
 
-    private void saveKits() {
+    private void saveKits(List<KitDefinition> stagedKits) {
         try {
-            runtime.kitRegistryFiles().save(runtime.kitRegistryService().kits());
+            runtime.kitRegistryFiles().save(stagedKits);
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to save kits.yml.", exception);
         }

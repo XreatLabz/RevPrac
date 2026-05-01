@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.List;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
@@ -27,6 +28,7 @@ import org.mockbukkit.mockbukkit.MockBukkit;
 import org.mockbukkit.mockbukkit.ServerMock;
 import org.mockbukkit.mockbukkit.command.CommandResult;
 import org.mockbukkit.mockbukkit.entity.PlayerMock;
+import org.mockbukkit.mockbukkit.world.WorldMock;
 
 final class RevPracAdminCommandTest {
 
@@ -64,11 +66,11 @@ final class RevPracAdminCommandTest {
     @Test
     void arenaCreateRequiresPlayerCapturesLocationAndPersistsArena() throws Exception {
         ServerMock server = MockBukkit.mock();
-        server.addSimpleWorld("arena-world");
+        WorldMock world = addKeyedWorld(server, "arena-world");
         RevPracPlugin plugin = MockBukkit.load(RevPracPlugin.class);
         PlayerMock player = server.addPlayer("arena-admin");
         player.setOp(true);
-        Location location = new Location(player.getWorld(), 10.75d, 65.25d, -4.4d, 135.0f, -12.5f);
+        Location location = new Location(world, 10.75d, 65.25d, -4.4d, 135.0f, -12.5f);
         player.teleport(location);
 
         CommandResult consoleResult = server.executeConsole("revprac", "arena", "create", "bridge", "8");
@@ -82,13 +84,15 @@ final class RevPracAdminCommandTest {
         ArenaDefinition arena = arenas.getFirst();
         assertEquals("bridge", arena.id().value());
         assertTrue(arena.enabled());
-        assertEquals(player.getWorld().getName(), arena.bounds().worldKey());
+        assertEquals(player.getWorld().getKey().asString(), arena.bounds().worldKey());
         assertEquals(2, arena.bounds().minX());
         assertEquals(57, arena.bounds().minY());
         assertEquals(-13, arena.bounds().minZ());
         assertEquals(18, arena.bounds().maxX());
         assertEquals(73, arena.bounds().maxY());
         assertEquals(3, arena.bounds().maxZ());
+        assertEquals(player.getWorld().getKey().asString(), arena.spawnOne().worldKey());
+        assertEquals(player.getWorld().getKey().asString(), arena.spawnTwo().worldKey());
         assertEquals(location.getX(), arena.spawnOne().x());
         assertEquals(location.getY(), arena.spawnOne().y());
         assertEquals(location.getZ(), arena.spawnOne().z());
@@ -155,16 +159,73 @@ final class RevPracAdminCommandTest {
     @Test
     void domainErrorsStayOperatorFacingAndDoNotMutateRegistries() {
         ServerMock server = MockBukkit.mock();
-        server.addSimpleWorld("error-world");
+        WorldMock world = addKeyedWorld(server, "error-world");
         RevPracPlugin plugin = MockBukkit.load(RevPracPlugin.class);
         PlayerMock player = server.addPlayer("error-admin");
         player.setOp(true);
+        player.teleport(new Location(world, 0.0d, 64.0d, 0.0d));
 
         CommandResult result = server.execute("revprac", player, "arena", "create", "Bridge!", "8");
 
         result.assertResponse("arena id must match [a-z0-9][a-z0-9_-]{0,62}");
         assertEquals(List.of(), arenaService(plugin).arenas());
         assertEquals(List.of(), kitService(plugin).kits());
+    }
+
+    @Test
+    void arenaSaveFailureLeavesRuntimeRegistryUnchangedAndAllowsRetry() throws Exception {
+        ServerMock server = MockBukkit.mock();
+        WorldMock world = addKeyedWorld(server, "arena-failure-world");
+        RevPracPlugin plugin = MockBukkit.load(RevPracPlugin.class);
+        PlayerMock player = server.addPlayer("arena-failure-admin");
+        player.setOp(true);
+        player.teleport(new Location(world, 0.0d, 64.0d, 0.0d));
+
+        Path blockingPath = plugin.getDataFolder().toPath().resolve("arena-save-blocker");
+        Files.writeString(blockingPath, "blocking file");
+        replaceRuntimeField(plugin, "arenaRegistryFiles", new PaperArenaRegistryFiles(blockingPath));
+
+        CommandResult failedResult = server.execute("revprac", player, "arena", "create", "bridge", "8");
+
+        failedResult.assertResponse("Failed to save arenas.yml.");
+        assertEquals(List.of(), arenaService(plugin).arenas());
+
+        replaceRuntimeField(plugin, "arenaRegistryFiles", new PaperArenaRegistryFiles(plugin.getDataFolder().toPath()));
+
+        CommandResult retryResult = server.execute("revprac", player, "arena", "create", "bridge", "8");
+
+        retryResult.assertResponse("Saved arena bridge.");
+        assertEquals(List.of("bridge"), arenaService(plugin).arenas().stream()
+                .map(arena -> arena.id().value())
+                .toList());
+    }
+
+    @Test
+    void kitSaveFailureLeavesRuntimeRegistryUnchangedAndAllowsRetry() throws Exception {
+        ServerMock server = MockBukkit.mock();
+        server.addSimpleWorld("kit-failure-world");
+        RevPracPlugin plugin = MockBukkit.load(RevPracPlugin.class);
+        PlayerMock player = server.addPlayer("kit-failure-admin");
+        player.setOp(true);
+        player.getInventory().setItem(0, new org.bukkit.inventory.ItemStack(Material.DIAMOND_SWORD, 1));
+
+        Path blockingPath = plugin.getDataFolder().toPath().resolve("kit-save-blocker");
+        Files.writeString(blockingPath, "blocking file");
+        replaceRuntimeField(plugin, "kitRegistryFiles", new PaperKitRegistryFiles(blockingPath));
+
+        CommandResult failedResult = server.execute("revprac", player, "kit", "save", "nodebuff");
+
+        failedResult.assertResponse("Failed to save kits.yml.");
+        assertEquals(List.of(), kitService(plugin).kits());
+
+        replaceRuntimeField(plugin, "kitRegistryFiles", new PaperKitRegistryFiles(plugin.getDataFolder().toPath()));
+
+        CommandResult retryResult = server.execute("revprac", player, "kit", "save", "nodebuff");
+
+        retryResult.assertResponse("Saved kit nodebuff.");
+        assertEquals(List.of("nodebuff"), kitService(plugin).kits().stream()
+                .map(kit -> kit.id().value())
+                .toList());
     }
 
     private static ArenaRegistryService arenaService(RevPracPlugin plugin) {
@@ -185,6 +246,40 @@ final class RevPracAdminCommandTest {
             return serviceField.get(runtime);
         } catch (ReflectiveOperationException exception) {
             throw new AssertionError("Could not access runtime field " + fieldName, exception);
+        }
+    }
+
+    private static void replaceRuntimeField(RevPracPlugin plugin, String fieldName, Object value) {
+        try {
+            Field runtimeField = RevPracPlugin.class.getDeclaredField("runtime");
+            runtimeField.setAccessible(true);
+            BootstrapRuntime runtime = (BootstrapRuntime) runtimeField.get(plugin);
+            Field field = BootstrapRuntime.class.getDeclaredField(fieldName);
+            field.setAccessible(true);
+            field.set(runtime, value);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("Could not replace runtime field " + fieldName, exception);
+        }
+    }
+
+    private static WorldMock addKeyedWorld(ServerMock server, String worldName) {
+        WorldMock world = new KeyedWorldMock(worldName);
+        server.addWorld(world);
+        return world;
+    }
+
+    private static final class KeyedWorldMock extends WorldMock {
+
+        private final NamespacedKey key;
+
+        private KeyedWorldMock(String worldName) {
+            this.key = NamespacedKey.minecraft(worldName);
+            setName(worldName);
+        }
+
+        @Override
+        public NamespacedKey getKey() {
+            return key;
         }
     }
 }
