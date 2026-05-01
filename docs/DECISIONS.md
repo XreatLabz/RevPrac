@@ -60,3 +60,15 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: Use in-memory active session and pending restoration repositories for Phase 2; durable restart/crash recovery is deferred to Phase 6 persistence.
 - Decision: Let `BootstrapRuntime.shutdown()` close intake and restore online managed players through `PlayerSessionService.shutdownAll()` before marking runtime shutdown complete.
 - Rationale: Phase 2 needs interruption safety before arenas, kits, and matches exist, but adding durable storage before the persistence phase would broaden the dependency surface too early.
+
+## 2026-05-01: Phase 3 Arena and Kit Registry Boundary
+
+- Decision: Model arenas and kits with plain Java domain records and application services; keep Bukkit/Paper types in `adapters.paper`.
+- Decision: Use operator-managed YAML files named `arenas.yml` and `kits.yml` in the plugin data folder for Phase 3 registry content.
+- Decision: Keep arena reservations in memory and use atomic create semantics for registry repositories.
+- Decision: Treat arena reset as a port boundary in Phase 3; the Paper adapter logs reset requests, and block rollback is deferred until match teardown work needs it.
+- Decision: Store kit item payloads as Base64 strings from `ItemStack.serializeAsBytes()` and validate payloads before publishing or applying kits.
+- Decision: Register `/revprac` through standard `plugin.yml` command metadata with a `revprac.admin` permission node.
+- Decision: Admin setup commands persist YAML before mutating runtime registry state, so save failures do not desynchronize memory from disk.
+- Decision: Arena setup stores namespaced Paper world keys instead of raw world names.
+- Rationale: Phase 3 needs operator-editable content and safe setup flows without introducing persistence, NMS, or match-engine complexity before later roadmap phases.

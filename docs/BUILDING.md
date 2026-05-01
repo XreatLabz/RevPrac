@@ -62,6 +62,27 @@ rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java/io/github/xreat
 
 The import check should return no matches. Paper player snapshot and event behavior belongs under `adapters.paper.players`; in-memory session storage belongs under `adapters.storage`.
 
+## Phase 3 Arena and Kit Registries
+
+For arena and kit registry work, run the focused pure-domain, application-service, storage, Paper-adapter, and command/plugin tests before the full gate:
+
+```bash
+./gradlew test --tests '*ArenaDefinitionContractTest' --tests '*KitDefinitionContractTest'
+./gradlew test --tests '*ArenaRegistryServiceTest' --tests '*KitRegistryServiceTest' --tests '*InMemoryArenaRegistryRepositoryTest' --tests '*InMemoryKitRegistryRepositoryTest'
+./gradlew test --tests '*PaperArenaRegistryFilesTest' --tests '*PaperKitLoadoutAdapterTest' --tests '*PaperKitRegistryFilesTest'
+./gradlew test --tests '*RevPracAdminCommandTest' --tests '*RevPracPluginPhase3Test'
+```
+
+Boundary checks:
+
+```bash
+rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java/io/github/xreatlabz/revprac/application src/main/java/io/github/xreatlabz/revprac/domain src/main/java/io/github/xreatlabz/revprac/ports
+```
+
+The import check should return no matches. Arena and kit domain/application logic belongs under `domain.arenas`, `domain.kits`, `application.arenas`, and `application.kits`. Paper YAML files, command parsing, player inventory capture/apply, and reset logging belong under `adapters.paper`.
+
+Operator-managed registry files are `arenas.yml` and `kits.yml` in the plugin data folder. Bad registry content should fail startup through the existing bootstrap failure path.
+
 ## Dependency Updates
 
 Dependency versions live in `gradle/libs.versions.toml`.

@@ -174,7 +174,7 @@ Validation:
 
 ### Phase 3: Arena and Kit Registries
 
-Status: Planned
+Status: Implemented
 
 Goal:
 
@@ -183,6 +183,27 @@ Goal:
 - support occupancy and reservation rules
 - implement reset hooks and kit serialization
 - add admin setup commands for operator-managed content
+
+Implemented scope:
+
+- plain Java `domain.arenas` contracts for arena IDs, bounds, spawn points, enabled definitions, reservation IDs, and reservations
+- plain Java `domain.kits` contracts for kit IDs, serialized inventory sections, potion effects, rules, and enabled definitions
+- plain Java `application.arenas.ArenaRegistryService` and `application.kits.KitRegistryService` for deterministic registration, listing, enabled-kit filtering, arena reservation, release, and reset orchestration
+- in-memory arena and kit registry repositories with atomic create semantics
+- Paper YAML adapters for `arenas.yml` and `kits.yml`, including fail-closed validation for malformed registry content
+- Paper kit loadout capture/apply adapter using Base64 `ItemStack.serializeAsBytes()` payloads and namespaced potion effect keys
+- `ArenaResetPort` plus a Phase 3 Paper reset adapter that logs reset requests without block rollback
+- `/revprac arena create <id> <radius>` and `/revprac kit save <id>` admin setup commands backed by `plugin.yml` command metadata and `revprac.admin`
+- bootstrap/runtime wiring that loads YAML registries on enable, shares services with commands, and routes invalid registry files through the existing startup failure path
+
+Phase boundary:
+
+- arena reservations are in memory only; durable reservation or match state is deferred to Phase 6 persistence
+- `arenas.yml` and `kits.yml` are operator-managed YAML registry files in the plugin data folder
+- arena reset is a hook boundary only in Phase 3; real block rollback or region reset work is deferred until match teardown needs it
+- setup commands intentionally cover the smallest useful operator flow: create a cuboid arena around the executing player and save the executing player's current kit
+- arena world references use Paper namespaced world keys, matching player-state snapshots
+- command persistence saves YAML first and mutates in-memory registries only after file persistence succeeds
 
 Exit criteria:
 
@@ -194,7 +215,10 @@ Exit criteria:
 Validation:
 
 ```bash
-./gradlew test
+./gradlew test --tests '*ArenaDefinitionContractTest' --tests '*KitDefinitionContractTest'
+./gradlew test --tests '*ArenaRegistryServiceTest' --tests '*KitRegistryServiceTest' --tests '*InMemoryArenaRegistryRepositoryTest' --tests '*InMemoryKitRegistryRepositoryTest'
+./gradlew test --tests '*PaperArenaRegistryFilesTest' --tests '*PaperKitLoadoutAdapterTest' --tests '*PaperKitRegistryFilesTest'
+./gradlew test --tests '*RevPracAdminCommandTest' --tests '*RevPracPluginPhase3Test'
 ./gradlew spotlessCheck test jacocoTestReport jar
 ./scripts/smoke-run-paper.sh
 ```
