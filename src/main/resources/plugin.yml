@@ -5,3 +5,13 @@ description: Minecraft practice core plugin for Modern Paper 1.21.11.
 authors: [XreatLabz]
 website: https://github.com/XreatLabz/RevPrac
 api-version: '1.21.11'
+commands:
+  revprac:
+    description: RevPrac admin setup commands.
+    usage: /revprac <arena|kit> ...
+    permission: revprac.admin
+    permission-message: You do not have permission to use this command.
+permissions:
+  revprac.admin:
+    description: Allows RevPrac arena and kit setup commands.
+    default: op

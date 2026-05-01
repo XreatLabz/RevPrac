@@ -1,6 +1,6 @@
 # Architecture
 
-RevPrac currently has a minimal Paper plugin scaffold. This page records the active platform choices and the domain map future code should grow into.
+RevPrac currently has a minimal Paper plugin scaffold plus early practice registry contracts. This page records the active platform choices and the domain map future code should grow into.
 
 ## Target Platform
 
@@ -27,8 +27,11 @@ RevPrac currently has a minimal Paper plugin scaffold. This page records the act
 - Metadata: `src/main/resources/plugin.yml`.
 - Bundled config: `src/main/resources/config.yml`.
 - Runtime boundary: `bootstrap` wires Paper adapters to plain Java config validation and stores a shutdown-capable runtime.
-- Plain Java contracts: `application.config`, `application.players`, `application.result`, `domain.players`, `ports.config`, `ports.lifecycle`, and `ports.players` stay free of Bukkit/Paper imports.
+- Plain Java contracts: `application.config`, `application.players`, `application.arenas`, `application.kits`, `application.result`, `domain.players`, `domain.arenas`, `domain.kits`, `ports.config`, `ports.lifecycle`, `ports.players`, `ports.arenas`, and `ports.kits` stay free of Bukkit/Paper imports.
 - Player-session safety: `domain.players` owns immutable session/snapshot contracts; `application.players.PlayerSessionService` owns transitions, duplicate-join behavior, pending restorations, and shutdown recovery; `adapters.paper.players` owns Paper capture/restore and join/quit listener wiring.
+- Arena registry: `domain.arenas` owns arena IDs, bounds, spawn points, definitions, and reservation value objects; `application.arenas.ArenaRegistryService` owns deterministic registration, reservation, release, and reset-hook orchestration; `adapters.paper.arenas` owns YAML registry files and Paper reset logging.
+- Kit registry: `domain.kits` owns kit IDs, serialized inventory sections, potion effects, rules, and definitions; `application.kits.KitRegistryService` owns deterministic registration and enabled-kit listing; `adapters.paper.kits` owns Paper inventory/effect capture, apply, and YAML registry files.
+- Admin commands: `adapters.paper.commands.RevPracAdminCommand` owns `/revprac arena create <id> <radius>` and `/revprac kit save <id>` parsing, permission checks, player-only checks, and YAML-first persistence before runtime mutation.
 - Tests: JUnit Jupiter and MockBukkit for plugin load/enable plus player-session adapter and lifecycle coverage.
 - Runtime check: `scripts/smoke-run-paper.sh` boots a real Paper 1.21.11 server and confirms RevPrac enables.
 
@@ -54,7 +57,13 @@ RevPrac currently has a minimal Paper plugin scaffold. This page records the act
 - Paper restore closes open inventories, validates the target world/location before inventory mutation, and includes cursor state in the captured inventory snapshot.
 - Bootstrap schedules session initialization for players already online when the plugin enables.
 - Pending player restorations are in memory until the persistence phase introduces durable player data.
+- Arena and kit registry files are operator-managed YAML files in the plugin data folder: `arenas.yml` and `kits.yml`.
+- Paper registry adapters must fail closed: invalid YAML, malformed item payloads, unknown potion effect keys, duplicate IDs, and mismatched inventory section sizes should reject load before publishing partial definitions.
+- Kit item payloads are Base64 strings produced from `ItemStack.serializeAsBytes()`; domain kit records never store Bukkit objects.
+- Arena world references use namespaced world keys such as `minecraft:world`.
+- Arena reset is a port boundary in Phase 3. The Paper adapter logs reset requests; block rollback is intentionally deferred.
+- Admin setup commands save YAML first and mutate in-memory registry services only after persistence succeeds.
 
 ## Next Architecture Step
 
-The next code should build arena and kit registries on top of the player-session safety boundary. Keep practice logic testable without a live server, keep config loading at the Paper boundary, and use Paper adapters only at runtime boundaries.
+The next code should build duel and match lifecycle behavior on top of the player-session safety, arena registry, and kit registry boundaries. Keep match rules testable without a live server, keep Paper adapters thin, and preserve in-memory registry/reservation assumptions until persistence is introduced.
