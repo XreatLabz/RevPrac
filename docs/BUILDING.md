@@ -104,6 +104,24 @@ The import check should return no matches in application, domain, ports, or stor
 
 The Phase 4 runtime uses in-memory match and duel-request state, `/duel <player> <arena> <kit>` for normal requests, `/duel request <player> <arena> <kit>` when the target name collides with a subcommand, lifecycle subcommands for active duels, and `matches.*` config defaults for request expiry, countdown, max duration, and spectator enablement.
 
+## Phase 5 Queues And Matchmaking
+
+For queue and matchmaking work, run the focused domain/config, service, storage, Paper-adapter, command, and plugin tests before the full gate:
+
+```bash
+./gradlew test --tests '*QueueTicketContractTest' --tests '*MatchmakingWindowPolicyContractTest'
+./gradlew test --tests '*QueueServiceTest' --tests '*QueueMatchmakingServiceTest' --tests '*InMemoryQueueTicketRepositoryTest' --tests '*InMemoryQueueRatingRepositoryTest'
+./gradlew test --tests '*PaperQueueLifecycleListenerTest' --tests '*PaperQueueTickerTest' --tests '*RevPracQueueCommandTest' --tests '*RevPracPluginPhase5Test'
+```
+
+Boundary checks:
+
+```bash
+rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java/io/github/xreatlabz/revprac/application/queues src/main/java/io/github/xreatlabz/revprac/domain/queues src/main/java/io/github/xreatlabz/revprac/ports/queues src/main/java/io/github/xreatlabz/revprac/adapters/storage
+```
+
+The import check should return no matches for queue domain, application, ports, or storage code. `application.config.QueueConfig` owns `queues.matchmaking-period-ticks`, `queues.ranked-base-rating`, `queues.ticks-per-second`, and `queues.ranked-windows`; queue matching lives in `application.queues.QueueService` and `application.queues.QueueMatchmakingService`; queue tickets and queue ratings stay in memory; Paper command parsing, listener wiring, ticker scheduling, and plugin tests belong under `adapters.paper.commands`, `adapters.paper.queues`, and the plugin boundary.
+
 ## Dependency Updates
 
 Dependency versions live in `gradle/libs.versions.toml`.

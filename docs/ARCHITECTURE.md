@@ -27,11 +27,13 @@ RevPrac currently has a minimal Paper plugin scaffold plus early practice regist
 - Metadata: `src/main/resources/plugin.yml`.
 - Bundled config: `src/main/resources/config.yml`.
 - Runtime boundary: `bootstrap` wires Paper adapters to plain Java config validation and stores a shutdown-capable runtime.
-- Plain Java contracts: `application.config`, `application.players`, `application.arenas`, `application.kits`, `application.result`, `domain.players`, `domain.arenas`, `domain.kits`, `ports.config`, `ports.lifecycle`, `ports.players`, `ports.arenas`, and `ports.kits` stay free of Bukkit/Paper imports.
+- Plain Java contracts: `application.config`, `application.players`, `application.arenas`, `application.kits`, `application.matches`, `application.queues`, `application.result`, `domain.players`, `domain.arenas`, `domain.kits`, `domain.matches`, `domain.queues`, `ports.config`, `ports.lifecycle`, `ports.players`, `ports.arenas`, `ports.kits`, `ports.matches`, and `ports.queues` stay free of Bukkit/Paper imports.
 - Player-session safety: `domain.players` owns immutable session/snapshot contracts; `application.players.PlayerSessionService` owns transitions, duplicate-join behavior, pending restorations, and shutdown recovery; `adapters.paper.players` owns Paper capture/restore and join/quit listener wiring.
 - Arena registry: `domain.arenas` owns arena IDs, bounds, spawn points, definitions, and reservation value objects; `application.arenas.ArenaRegistryService` owns deterministic registration, reservation, release, and reset-hook orchestration; `adapters.paper.arenas` owns YAML registry files and Paper reset logging.
 - Kit registry: `domain.kits` owns kit IDs, serialized inventory sections, potion effects, rules, and definitions; `application.kits.KitRegistryService` owns deterministic registration and enabled-kit listing; `adapters.paper.kits` owns Paper inventory/effect capture, apply, and YAML registry files.
 - Match engine: `domain.matches` owns duel requests, match IDs, participants, sides, rulesets, outcomes, end reasons, states, and lifecycle events; `application.matches` owns request intake, accept/deny/cancel, countdown, completion, teardown, spectator flow, and shutdown replay; `adapters.storage` owns in-memory match/request repositories; `adapters.paper.matches` owns the listener, ticker, and player preparation boundary.
+- Queue system: `domain.queues` owns queue modes, keys, tickets, ticket states, and matchmaking-window compatibility; `application.queues.QueueService` owns `/queue` join/leave/status, queue availability gating, queue session transitions, ranked base-rating seeding, and shutdown drainage; `application.queues.QueueMatchmakingService` owns deterministic sweeps and queued match handoff; `adapters.storage` owns in-memory queue ticket and queue rating repositories; `adapters.paper.commands.RevPracQueueCommand` owns `/queue` parsing; `adapters.paper.queues` owns the synchronous ticker and quit listener.
+- Queue config: `application.config.QueueConfig` owns `queues.matchmaking-period-ticks`, `queues.ranked-base-rating`, `queues.ticks-per-second`, and `queues.ranked-windows`.
 - Command surface: `adapters.paper.commands.RevPracAdminCommand` owns `/revprac arena create <id> <radius>` and `/revprac kit save <id>` parsing, permission checks, player-only checks, and YAML-first persistence before runtime mutation; `adapters.paper.commands.RevPracDuelCommand` owns `/duel <player> <arena> <kit>`, explicit `/duel request <player> <arena> <kit>`, accept, deny/decline, cancel, spectate, and forfeit parsing through the Paper command layer.
 - Match config: `application.config.MatchConfig` owns `matches.duel-request-expiry-seconds`, `matches.countdown-ticks`, `matches.max-duration-ticks`, and `matches.spectators-enabled` with documented defaults from `config.yml`.
 - Tests: JUnit Jupiter and MockBukkit for plugin load/enable plus player-session adapter and lifecycle coverage.
@@ -41,7 +43,7 @@ RevPrac currently has a minimal Paper plugin scaffold plus early practice regist
 
 - `arenas`: arena definitions, bounds, spawn points, validation, occupancy, and reset hooks.
 - `kits`: kit metadata, inventories, armor, effects, rules, and serialization.
-- `queues`: queue registration, matchmaking policy, ranked and unranked flow, and leave/rejoin behavior.
+- `queues`: queue registration, matchmaking policy, ranked and unranked flow, active-ticket lifecycle, and leave/rejoin behavior.
 - `players`: player profiles, session state, cooldowns, statistics, ratings, and persistence-facing models.
 - `commands`: player, staff, and admin command surfaces with permission checks.
 - `config-storage`: config loading, validation, migrations, and persistence adapters.
@@ -64,7 +66,11 @@ RevPrac currently has a minimal Paper plugin scaffold plus early practice regist
 - Arena world references use namespaced world keys such as `minecraft:world`.
 - Arena reset is a port boundary in Phase 3. The Paper adapter logs reset requests; block rollback is intentionally deferred.
 - Admin setup commands save YAML first and mutate in-memory registry services only after persistence succeeds.
+- Queue tickets and queue ratings are in-memory runtime state only; join does not reserve an arena, and queued matches claim a pair first before `MatchLifecycleService.startQueuedMatch()` reserves an arena for the match.
+- Ranked queue eligibility is gated by `KitRules.ranked`, but ranked-capable kits can still be used in unranked queues.
+- Direct duel and queue flows share `PlayerAvailabilityService`, so active duel, match, or queue players cannot start a conflicting flow.
+- The queue ticker is synchronous and uses the current server tick when it sweeps matchmaking.
 
 ## Next Architecture Step
 
-The next code should build queueing and ranked progression on top of the existing duel and match engine, not replace it. Keep match rules testable without a live server, keep Paper adapters thin, and preserve in-memory match/request assumptions until persistence is introduced.
+The next code should add durable player ratings, queue progression, stats, seasons, and match history on top of the existing duel, match, and queue engines. Keep match and queue rules testable without a live server, keep Paper adapters thin, and preserve in-memory match, queue-ticket, and queue-rating assumptions until persistence is introduced.

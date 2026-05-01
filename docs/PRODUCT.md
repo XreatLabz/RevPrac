@@ -21,8 +21,8 @@ RevPrac is a Minecraft practice core plugin for Paper 1.21.11. It is intended to
 
 ## Current Non-Goals
 
-- Arena and kit registry/setup groundwork exists, and direct duel/match lifecycle gameplay is implemented.
-- No queue orchestration, ranked progression, ratings or stats tracking, parties, rematch, or post-match summary systems yet.
+- Arena and kit registry/setup groundwork exists, direct duel/match lifecycle gameplay is implemented, and in-memory queue orchestration/matchmaking now exists.
+- Ranked progression, durable ratings, stats tracking, parties, rematch, post-match summaries, and persistence remain future work.
 - No durable persistence for mutable match or player state beyond operator-managed local YAML registry/setup files.
 - No compatibility promise beyond the documented Paper 1.21.11 direction.
 
