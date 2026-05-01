@@ -38,7 +38,7 @@ RevPrac currently has:
 
 Current repo shape is intentionally small:
 
-- no arena, kit, queue, match, rating, or persistence feature modules yet
+- arena and kit registry groundwork exists; queue, match, rating, and durable persistence feature modules are still planned
 - no Gradle subprojects yet
 - no public plugin API surface yet
 
