@@ -36,6 +36,7 @@ import io.github.xreatlabz.revprac.domain.players.PlayerContext;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
 import io.github.xreatlabz.revprac.domain.players.PlayerSafetySnapshot;
 import io.github.xreatlabz.revprac.domain.players.PlayerStatusSnapshot;
+import io.github.xreatlabz.revprac.domain.players.TransitionReason;
 import io.github.xreatlabz.revprac.ports.arenas.ArenaResetPort;
 import io.github.xreatlabz.revprac.ports.matches.MatchPlayerPort;
 import io.github.xreatlabz.revprac.ports.players.PlayerStatePort;
@@ -368,6 +369,98 @@ final class MatchLifecycleServiceTest {
         assertEquals(1, harness.arenaResetPort.resetCalls.size());
     }
 
+    @Test
+    void queuedMatchesRejectTheSamePlayerAndChooseTheFirstEnabledAvailableArenaById() {
+        Harness samePlayerHarness = new Harness(new MatchRuleset(2, 8, true));
+        samePlayerHarness.join(samePlayerHarness.spectator());
+        samePlayerHarness.playerSessionService.transitionTo(
+                samePlayerHarness.spectator(), PlayerContext.QUEUE, TransitionReason.QUEUE_JOIN);
+
+        IllegalArgumentException samePlayer = assertThrows(
+                IllegalArgumentException.class,
+                () -> samePlayerHarness.matchLifecycleService.startQueuedMatch(
+                        samePlayerHarness.spectator(), samePlayerHarness.spectator(), samePlayerHarness.kitId()));
+        assertEquals("queued match requires distinct players", samePlayer.getMessage());
+
+        Harness selectionHarness = new Harness(new MatchRuleset(2, 8, true));
+        selectionHarness.registerArena("arena-a");
+        selectionHarness.registerArena("arena-z");
+        selectionHarness.queueParticipants();
+        selectionHarness.reserveArena("arena-a", "busy");
+
+        Match match = selectionHarness.matchLifecycleService.startQueuedMatch(
+                selectionHarness.requester(), selectionHarness.target(), selectionHarness.kitId());
+
+        assertEquals(new ArenaId("arena-one"), match.arenaId());
+        assertEquals(PlayerContext.MATCH, selectionHarness.playerSessions.find(selectionHarness.requester()).orElseThrow().context());
+        assertEquals(PlayerContext.MATCH, selectionHarness.playerSessions.find(selectionHarness.target()).orElseThrow().context());
+    }
+
+    @Test
+    void queuedMatchKitValidationFailuresDoNotReserveArenaOrBlockLaterValidStart() {
+        Harness missingKitHarness = new Harness(new MatchRuleset(2, 8, true));
+        missingKitHarness.queueParticipants();
+        assertQueuedKitFailureDoesNotReserveArena(missingKitHarness, new KitId("missing-kit"));
+
+        Harness disabledKitHarness = new Harness(new MatchRuleset(2, 8, true));
+        KitId disabledKitId = new KitId("disabled-kit");
+        disabledKitHarness.registerKit(disabledKitId, false);
+        disabledKitHarness.queueParticipants();
+        assertQueuedKitFailureDoesNotReserveArena(disabledKitHarness, disabledKitId);
+    }
+
+    @Test
+    void queuedMatchArenaUnavailableFailsBeforeSessionTransitionAndLateFailuresReuseRollbackCleanup() {
+        Harness unavailableHarness = new Harness(new MatchRuleset(2, 8, true));
+        unavailableHarness.registerArena("arena-a");
+        unavailableHarness.queueParticipants();
+        unavailableHarness.reserveAllArenas();
+
+        IllegalStateException unavailable = assertThrows(
+                IllegalStateException.class,
+                () -> unavailableHarness.matchLifecycleService.startQueuedMatch(
+                        unavailableHarness.requester(), unavailableHarness.target(), unavailableHarness.kitId()));
+        assertInstanceOf(MatchLifecycleService.ArenaUnavailableException.class, unavailable);
+        assertEquals(PlayerContext.QUEUE, unavailableHarness.playerSessions.find(unavailableHarness.requester()).orElseThrow().context());
+        assertEquals(PlayerContext.QUEUE, unavailableHarness.playerSessions.find(unavailableHarness.target()).orElseThrow().context());
+        assertTrue(unavailableHarness.matchRepository.findAll().isEmpty());
+
+        Harness rollbackHarness = new Harness(new MatchRuleset(2, 8, true));
+        rollbackHarness.queueParticipants();
+        rollbackHarness.matchPlayerPort.failPrepareFor(rollbackHarness.target(), "prepare failed for queued target");
+
+        IllegalStateException rollback = assertThrows(
+                IllegalStateException.class,
+                () -> rollbackHarness.matchLifecycleService.startQueuedMatch(
+                        rollbackHarness.requester(), rollbackHarness.target(), rollbackHarness.kitId()));
+
+        assertEquals("prepare failed for queued target", rollback.getMessage());
+        assertTrue(rollbackHarness.matchRepository.findAll().isEmpty());
+        assertEquals(PlayerContext.LOBBY, rollbackHarness.playerSessions.find(rollbackHarness.requester()).orElseThrow().context());
+        assertEquals(PlayerContext.LOBBY, rollbackHarness.playerSessions.find(rollbackHarness.target()).orElseThrow().context());
+        assertEquals(1, rollbackHarness.arenaResetPort.resetCalls.size());
+    }
+
+    private static void assertQueuedKitFailureDoesNotReserveArena(Harness harness, KitId rejectedKitId) {
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> harness.matchLifecycleService.startQueuedMatch(
+                        harness.requester(), harness.target(), rejectedKitId));
+
+        assertEquals("unknown kit: " + rejectedKitId.value(), failure.getMessage());
+        assertEquals(PlayerContext.QUEUE, harness.playerSessions.find(harness.requester()).orElseThrow().context());
+        assertEquals(PlayerContext.QUEUE, harness.playerSessions.find(harness.target()).orElseThrow().context());
+        assertTrue(harness.matchRepository.findAll().isEmpty());
+        assertEquals(0, harness.arenaResetPort.resetCalls.size(), "kit validation should fail before arena reservation");
+
+        Match laterMatch = harness.matchLifecycleService.startQueuedMatch(
+                harness.requester(), harness.target(), harness.kitId());
+
+        assertEquals(new ArenaId("arena-one"), laterMatch.arenaId());
+        assertEquals(PlayerContext.MATCH, harness.playerSessions.find(harness.requester()).orElseThrow().context());
+        assertEquals(PlayerContext.MATCH, harness.playerSessions.find(harness.target()).orElseThrow().context());
+    }
+
     private static void assertTerminalOutcome(Harness harness, MatchEndReason reason) {
         assertTrue(harness.matchRepository.findAll().isEmpty(), "Successful teardown should delete the match");
         assertEquals(List.of(harness.requester(), harness.target(), harness.spectator()), harness.matchPlayerPort.clearedPlayers);
@@ -457,6 +550,11 @@ final class MatchLifecycleServiceTest {
             playerSessionService.join(playerId);
         }
 
+        private void queueParticipants() {
+            playerSessionService.transitionTo(requester(), PlayerContext.QUEUE, TransitionReason.QUEUE_JOIN);
+            playerSessionService.transitionTo(target(), PlayerContext.QUEUE, TransitionReason.QUEUE_JOIN);
+        }
+
         private Match startAcceptedDuel() {
             DuelRequest accepted = new DuelRequest(
                     new DuelRequestId(UUID.nameUUIDFromBytes("request".getBytes())),
@@ -481,13 +579,41 @@ final class MatchLifecycleServiceTest {
         }
 
         private KitDefinition kitDefinition() {
+            return kitDefinition(kitId(), "Kit One", true);
+        }
+
+        private KitDefinition kitDefinition(KitId kitId, String displayName, boolean enabled) {
             return new KitDefinition(
-                    kitId(),
-                    "Kit One",
+                    kitId,
+                    displayName,
                     new KitInventory(List.of("sword"), List.of("helmet", "chest", "legs", "boots"), List.of("rod"), 0),
                     List.of(),
                     new KitRules(false, false, false, false),
-                    true);
+                    enabled);
+        }
+
+        private void registerArena(String arenaId) {
+            arenaRegistryService.register(new ArenaDefinition(
+                    new ArenaId(arenaId),
+                    arenaId,
+                    new ArenaCuboid("minecraft:world", 0, 60, 0, 20, 90, 20),
+                    new ArenaSpawnPoint("minecraft:world", 2.0d, 70.0d, 2.0d, 0.0f, 0.0f),
+                    new ArenaSpawnPoint("minecraft:world", 18.0d, 70.0d, 18.0d, 180.0f, 0.0f),
+                    true));
+        }
+
+        private void reserveArena(String arenaId, String ownerKey) {
+            arenaRegistryService.reserve(new ArenaId(arenaId), ownerKey);
+        }
+
+        private void reserveAllArenas() {
+            for (ArenaDefinition arena : arenaRegistryService.arenas()) {
+                arenaRegistryService.reserve(arena.id(), "busy:" + arena.id().value());
+            }
+        }
+
+        private void registerKit(KitId kitId, boolean enabled) {
+            kitRegistryService.register(kitDefinition(kitId, kitId.value(), enabled));
         }
     }
 

@@ -3,12 +3,15 @@ package io.github.xreatlabz.revprac.bootstrap;
 import io.github.xreatlabz.revprac.adapters.paper.arenas.PaperArenaRegistryFiles;
 import io.github.xreatlabz.revprac.adapters.paper.kits.PaperKitRegistryFiles;
 import io.github.xreatlabz.revprac.adapters.paper.matches.PaperMatchTicker;
+import io.github.xreatlabz.revprac.adapters.paper.queues.PaperQueueTicker;
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.config.RevPracConfig;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
 import io.github.xreatlabz.revprac.application.matches.DuelRequestService;
 import io.github.xreatlabz.revprac.application.matches.MatchLifecycleService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
+import io.github.xreatlabz.revprac.application.queues.QueueMatchmakingService;
+import io.github.xreatlabz.revprac.application.queues.QueueService;
 import io.github.xreatlabz.revprac.ports.lifecycle.LifecycleReporter;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -25,13 +28,16 @@ public final class BootstrapRuntime {
     private final DuelRequestService duelRequestService;
     private final MatchLifecycleService matchLifecycleService;
     private final PaperMatchTicker paperMatchTicker;
+    private final QueueService queueService;
+    private final QueueMatchmakingService queueMatchmakingService;
+    private final PaperQueueTicker paperQueueTicker;
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
 
     public BootstrapRuntime(
             RevPracConfig config,
             LifecycleReporter lifecycleReporter,
             PlayerSessionService playerSessionService) {
-        this(config, lifecycleReporter, playerSessionService, null, null, null, null, null, null, null);
+        this(config, lifecycleReporter, playerSessionService, null, null, null, null, null, null, null, null, null, null);
     }
 
     public BootstrapRuntime(
@@ -52,6 +58,9 @@ public final class BootstrapRuntime {
                 kitRegistryFiles,
                 null,
                 null,
+                null,
+                null,
+                null,
                 null);
     }
 
@@ -66,6 +75,36 @@ public final class BootstrapRuntime {
             DuelRequestService duelRequestService,
             MatchLifecycleService matchLifecycleService,
             PaperMatchTicker paperMatchTicker) {
+        this(
+                config,
+                lifecycleReporter,
+                playerSessionService,
+                arenaRegistryService,
+                kitRegistryService,
+                arenaRegistryFiles,
+                kitRegistryFiles,
+                duelRequestService,
+                matchLifecycleService,
+                paperMatchTicker,
+                null,
+                null,
+                null);
+    }
+
+    public BootstrapRuntime(
+            RevPracConfig config,
+            LifecycleReporter lifecycleReporter,
+            PlayerSessionService playerSessionService,
+            ArenaRegistryService arenaRegistryService,
+            KitRegistryService kitRegistryService,
+            PaperArenaRegistryFiles arenaRegistryFiles,
+            PaperKitRegistryFiles kitRegistryFiles,
+            DuelRequestService duelRequestService,
+            MatchLifecycleService matchLifecycleService,
+            PaperMatchTicker paperMatchTicker,
+            QueueService queueService,
+            QueueMatchmakingService queueMatchmakingService,
+            PaperQueueTicker paperQueueTicker) {
         this.config = Objects.requireNonNull(config, "config");
         this.lifecycleReporter = Objects.requireNonNull(lifecycleReporter, "lifecycleReporter");
         this.playerSessionService = Objects.requireNonNull(playerSessionService, "playerSessionService");
@@ -76,6 +115,9 @@ public final class BootstrapRuntime {
         this.duelRequestService = duelRequestService;
         this.matchLifecycleService = matchLifecycleService;
         this.paperMatchTicker = paperMatchTicker;
+        this.queueService = queueService;
+        this.queueMatchmakingService = queueMatchmakingService;
+        this.paperQueueTicker = paperQueueTicker;
     }
 
     public RevPracConfig config() {
@@ -110,12 +152,28 @@ public final class BootstrapRuntime {
         return paperMatchTicker;
     }
 
+    public QueueService queueService() {
+        return queueService;
+    }
+
+    public QueueMatchmakingService queueMatchmakingService() {
+        return queueMatchmakingService;
+    }
+
+    public PaperQueueTicker paperQueueTicker() {
+        return paperQueueTicker;
+    }
+
     public void shutdown() {
         if (shutdown.get()) {
             return;
         }
 
         RuntimeException failure = null;
+        failure = attemptShutdownStep(failure, queueService, QueueService::closeIntake);
+        failure = attemptShutdownStep(failure, queueMatchmakingService, QueueMatchmakingService::closeIntake);
+        failure = attemptShutdownStep(failure, paperQueueTicker, PaperQueueTicker::cancel);
+        failure = attemptShutdownStep(failure, queueService, QueueService::shutdownAll);
         failure = attemptShutdownStep(failure, duelRequestService, DuelRequestService::closeIntake);
         failure = attemptShutdownStep(failure, paperMatchTicker, PaperMatchTicker::cancel);
         failure = attemptShutdownStep(failure, matchLifecycleService, MatchLifecycleService::shutdownAll);

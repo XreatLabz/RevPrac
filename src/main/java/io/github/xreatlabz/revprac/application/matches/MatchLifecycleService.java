@@ -68,6 +68,34 @@ public final class MatchLifecycleService {
         });
     }
 
+    public Match startQueuedMatch(PlayerId firstPlayerId, PlayerId secondPlayerId, KitId kitId) {
+        Objects.requireNonNull(firstPlayerId, "firstPlayerId");
+        Objects.requireNonNull(secondPlayerId, "secondPlayerId");
+        Objects.requireNonNull(kitId, "kitId");
+        mutationLock.lock();
+        try {
+            ensureIntakeOpen();
+            if (firstPlayerId.equals(secondPlayerId)) {
+                throw new IllegalArgumentException("queued match requires distinct players");
+            }
+
+            MatchId matchId = new MatchId(UUID.randomUUID());
+            KitDefinition kitDefinition = reserveKit(kitId);
+            ReservedArena reservedArena = reserveFirstEnabledArena(matchId);
+            return startReservedMatchLocked(
+                    matchId,
+                    firstPlayerId,
+                    secondPlayerId,
+                    reservedArena.definition(),
+                    kitDefinition,
+                    reservedArena.reservation(),
+                    match -> {
+                    });
+        } finally {
+            mutationLock.unlock();
+        }
+    }
+
     Match startAcceptedDuel(DuelRequest duelRequest, Consumer<Match> beforeCountdown) {
         Objects.requireNonNull(duelRequest, "duelRequest");
         Objects.requireNonNull(beforeCountdown, "beforeCountdown");
@@ -79,57 +107,15 @@ public final class MatchLifecycleService {
             }
 
             ArenaDefinition arenaDefinition = requireArena(duelRequest.arenaId());
-            KitDefinition kitDefinition = requireKit(duelRequest.kitId());
             MatchId matchId = new MatchId(UUID.randomUUID());
-            ArenaReservation reservation = arenaRegistryService.reserve(duelRequest.arenaId(), "match:" + matchId.value());
-            Match match = Match.create(
+            return startReservedMatchLocked(
                     matchId,
-                    new MatchParticipants(duelRequest.requesterId(), duelRequest.targetId()),
-                    duelRequest.arenaId(),
-                    duelRequest.kitId(),
-                    reservation.reservationId(),
-                    matchRuleset);
-
-            List<PlayerId> transitionedPlayers = new ArrayList<>();
-            List<PlayerId> preparedPlayers = new ArrayList<>();
-            boolean matchCreated = false;
-            try {
-                transitionParticipant(duelRequest.requesterId(), transitionedPlayers);
-                transitionParticipant(duelRequest.targetId(), transitionedPlayers);
-
-                matchPlayerPort.prepareCombatant(
-                        duelRequest.requesterId(), match, MatchSide.ONE, arenaDefinition, kitDefinition);
-                preparedPlayers.add(duelRequest.requesterId());
-                matchPlayerPort.prepareCombatant(
-                        duelRequest.targetId(), match, MatchSide.TWO, arenaDefinition, kitDefinition);
-                preparedPlayers.add(duelRequest.targetId());
-
-                if (!matchRepository.create(match)) {
-                    throw new IllegalStateException("match could not be created");
-                }
-                matchCreated = true;
-                beforeCountdown.accept(match);
-            } catch (RuntimeException exception) {
-                if (matchCreated) {
-                    try {
-                        matchRepository.delete(match.id());
-                    } catch (RuntimeException deleteFailure) {
-                        exception.addSuppressed(deleteFailure);
-                    }
-                }
-                rollbackPreparation(preparedPlayers, exception);
-                rollbackTransitions(transitionedPlayers, exception);
-                try {
-                    arenaRegistryService.release(reservation.reservationId());
-                } catch (RuntimeException releaseFailure) {
-                    exception.addSuppressed(releaseFailure);
-                }
-                throw exception;
-            }
-
-            emit(sequence -> new MatchEvent.MatchCountdownStarted(
-                    sequence, match.id(), match.countdownTicksRemaining()));
-            return match;
+                    duelRequest.requesterId(),
+                    duelRequest.targetId(),
+                    arenaDefinition,
+                    reserveKit(duelRequest.kitId()),
+                    reserveArena(arenaDefinition, matchId),
+                    beforeCountdown);
         } finally {
             mutationLock.unlock();
         }
@@ -308,6 +294,62 @@ public final class MatchLifecycleService {
         transitionedPlayers.add(playerId);
     }
 
+    private Match startReservedMatchLocked(
+            MatchId matchId,
+            PlayerId firstPlayerId,
+            PlayerId secondPlayerId,
+            ArenaDefinition arenaDefinition,
+            KitDefinition kitDefinition,
+            ArenaReservation reservation,
+            Consumer<Match> beforeCountdown) {
+        Match match = Match.create(
+                matchId,
+                new MatchParticipants(firstPlayerId, secondPlayerId),
+                arenaDefinition.id(),
+                kitDefinition.id(),
+                reservation.reservationId(),
+                matchRuleset);
+
+        List<PlayerId> transitionedPlayers = new ArrayList<>();
+        List<PlayerId> preparedPlayers = new ArrayList<>();
+        boolean matchCreated = false;
+        try {
+            transitionParticipant(firstPlayerId, transitionedPlayers);
+            transitionParticipant(secondPlayerId, transitionedPlayers);
+
+            matchPlayerPort.prepareCombatant(firstPlayerId, match, MatchSide.ONE, arenaDefinition, kitDefinition);
+            preparedPlayers.add(firstPlayerId);
+            matchPlayerPort.prepareCombatant(secondPlayerId, match, MatchSide.TWO, arenaDefinition, kitDefinition);
+            preparedPlayers.add(secondPlayerId);
+
+            if (!matchRepository.create(match)) {
+                throw new IllegalStateException("match could not be created");
+            }
+            matchCreated = true;
+            beforeCountdown.accept(match);
+        } catch (RuntimeException exception) {
+            if (matchCreated) {
+                try {
+                    matchRepository.delete(match.id());
+                } catch (RuntimeException deleteFailure) {
+                    exception.addSuppressed(deleteFailure);
+                }
+            }
+            rollbackPreparation(preparedPlayers, exception);
+            rollbackTransitions(transitionedPlayers, exception);
+            try {
+                arenaRegistryService.release(reservation.reservationId());
+            } catch (RuntimeException releaseFailure) {
+                exception.addSuppressed(releaseFailure);
+            }
+            throw exception;
+        }
+
+        emit(sequence -> new MatchEvent.MatchCountdownStarted(
+                sequence, match.id(), match.countdownTicksRemaining()));
+        return match;
+    }
+
     private void rollbackPreparation(List<PlayerId> preparedPlayers, RuntimeException originalFailure) {
         for (PlayerId preparedPlayer : preparedPlayers) {
             try {
@@ -418,12 +460,36 @@ public final class MatchLifecycleService {
                 .orElseThrow(() -> new IllegalArgumentException("unknown arena: " + arenaId.value()));
     }
 
-    private KitDefinition requireKit(KitId kitId) {
+    private KitDefinition reserveKit(KitId kitId) {
         return kitRegistryService.kits().stream()
                 .filter(kitDefinition -> kitDefinition.id().equals(kitId))
                 .findFirst()
                 .filter(KitDefinition::enabled)
                 .orElseThrow(() -> new IllegalArgumentException("unknown kit: " + kitId.value()));
+    }
+
+    private ArenaReservation reserveArena(ArenaDefinition arenaDefinition, MatchId matchId) {
+        try {
+            return arenaRegistryService.reserve(arenaDefinition.id(), "match:" + matchId.value());
+        } catch (IllegalStateException exception) {
+            throw new ArenaUnavailableException(exception.getMessage(), exception);
+        }
+    }
+
+    private ReservedArena reserveFirstEnabledArena(MatchId matchId) {
+        RuntimeException lastFailure = null;
+        for (ArenaDefinition arenaDefinition : arenaRegistryService.arenas()) {
+            if (!arenaDefinition.enabled()) {
+                continue;
+            }
+            try {
+                return new ReservedArena(arenaDefinition, arenaRegistryService.reserve(
+                        arenaDefinition.id(), "match:" + matchId.value()));
+            } catch (IllegalStateException exception) {
+                lastFailure = exception;
+            }
+        }
+        throw new ArenaUnavailableException("no enabled arenas available for queued match", lastFailure);
     }
 
     private void ensureIntakeOpen() {
@@ -442,5 +508,19 @@ public final class MatchLifecycleService {
         }
         current.addSuppressed(next);
         return current;
+    }
+
+    private record ReservedArena(ArenaDefinition definition, ArenaReservation reservation) {
+    }
+
+    public static final class ArenaUnavailableException extends IllegalStateException {
+
+        public ArenaUnavailableException(String message, Throwable cause) {
+            super(message, cause);
+        }
+
+        public ArenaUnavailableException(String message) {
+            super(message);
+        }
     }
 }

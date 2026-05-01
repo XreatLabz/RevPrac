@@ -16,10 +16,18 @@ commands:
     usage: /duel <player> <arena> <kit>|request <player> <arena> <kit>|accept <player>|deny <player>|cancel <player>|spectate <player>|forfeit
     permission: revprac.duel
     permission-message: You do not have permission to use this command.
+  queue:
+    description: RevPrac ranked and unranked queue commands.
+    usage: /queue join <ranked|unranked> <kit>|leave|status
+    permission: revprac.queue
+    permission-message: You do not have permission to use this command.
 permissions:
   revprac.admin:
     description: Allows RevPrac arena and kit setup commands.
     default: op
   revprac.duel:
     description: Allows RevPrac duel and spectate commands.
+    default: true
+  revprac.queue:
+    description: Allows RevPrac queue commands.
     default: true

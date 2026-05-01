@@ -1,5 +1,6 @@
 package io.github.xreatlabz.revprac.application.config;
 
+import static io.github.xreatlabz.revprac.ContractTestSupport.instantiateRecord;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -12,6 +13,7 @@ import io.github.xreatlabz.revprac.application.result.ProblemCategory;
 import io.github.xreatlabz.revprac.application.result.Result;
 import io.github.xreatlabz.revprac.ports.config.ConfigSource;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -20,18 +22,30 @@ import org.junit.jupiter.api.Test;
 
 final class LoadValidatedConfigServiceContractTest {
 
+    private static final String QUEUE_CONFIG_TYPE = "io.github.xreatlabz.revprac.application.config.QueueConfig";
+    private static final String WINDOW_STEP_TYPE =
+            "io.github.xreatlabz.revprac.domain.queues.MatchmakingWindowPolicy$WindowStep";
+
     private final LoadValidatedConfigService service = new LoadValidatedConfigService();
 
     @Test
     void validConfigParsesIntoImmutableRevPracConfig() {
-        Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
-                "config-version", 1,
-                "bootstrap.fail-fast-on-enable", false,
-                "diagnostics.verbose-lifecycle-logs", true,
-                "matches.duel-request-expiry-seconds", 45,
-                "matches.countdown-ticks", 60,
-                "matches.max-duration-ticks", 4000,
-                "matches.spectators-enabled", false)));
+        Result<RevPracConfig> result = service.load(new MapConfigSource(Map.ofEntries(
+                Map.entry("config-version", 1),
+                Map.entry("bootstrap.fail-fast-on-enable", false),
+                Map.entry("diagnostics.verbose-lifecycle-logs", true),
+                Map.entry("matches.duel-request-expiry-seconds", 45),
+                Map.entry("matches.countdown-ticks", 60),
+                Map.entry("matches.max-duration-ticks", 4000),
+                Map.entry("matches.spectators-enabled", false),
+                Map.entry("queues.matchmaking-period-ticks", 10),
+                Map.entry("queues.ranked-base-rating", 1337),
+                Map.entry("queues.ticks-per-second", 40),
+                Map.entry(
+                        "queues.ranked-windows",
+                        List.of(
+                                Map.of("wait-seconds", 0, "rating-window", 60),
+                                Map.of("wait-seconds", 15, "rating-window", 120))))));
 
         RevPracConfig config = assertOk(result);
 
@@ -46,10 +60,19 @@ final class LoadValidatedConfigServiceContractTest {
         assertEquals(60, config.matches().countdownTicks());
         assertEquals(4000, config.matches().maxDurationTicks());
         assertFalse(config.matches().spectatorsEnabled());
+        Object queueConfig = readAccessor(config, "queues");
+        assertTrue(queueConfig.getClass().isRecord(), "QueueConfig should be an immutable record");
+        assertEquals(10, readAccessor(queueConfig, "matchmakingPeriodTicks"));
+        assertEquals(1337, readAccessor(queueConfig, "rankedBaseRating"));
+        assertEquals(40, readAccessor(queueConfig, "ticksPerSecond"));
+        List<?> rankedWindows = assertInstanceOf(List.class, readAccessor(queueConfig, "rankedWindows"));
+        assertEquals(2, rankedWindows.size());
+        assertEquals(15L, readAccessor(rankedWindows.get(1), "waitSeconds"));
+        assertEquals(120, readAccessor(rankedWindows.get(1), "ratingWindow"));
     }
 
     @Test
-    void missingOptionalBootstrapAndDiagnosticsValuesUseDocumentedDefaults() {
+    void missingOptionalBootstrapDiagnosticsMatchAndQueueValuesUseDocumentedDefaults() {
         Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of("config-version", 1)));
 
         RevPracConfig config = assertOk(result);
@@ -60,13 +83,24 @@ final class LoadValidatedConfigServiceContractTest {
         assertEquals(100, config.matches().countdownTicks());
         assertEquals(12000, config.matches().maxDurationTicks());
         assertTrue(config.matches().spectatorsEnabled());
+        Object queueConfig = readAccessor(config, "queues");
+        List<?> rankedWindows = assertInstanceOf(List.class, readAccessor(queueConfig, "rankedWindows"));
+        assertEquals(20, readAccessor(queueConfig, "matchmakingPeriodTicks"));
+        assertEquals(1000, readAccessor(queueConfig, "rankedBaseRating"));
+        assertEquals(20, readAccessor(queueConfig, "ticksPerSecond"));
+        assertEquals(5, rankedWindows.size());
+        assertEquals(0L, readAccessor(rankedWindows.get(0), "waitSeconds"));
+        assertEquals(50, readAccessor(rankedWindows.get(0), "ratingWindow"));
+        assertEquals(45L, readAccessor(rankedWindows.get(4), "waitSeconds"));
+        assertEquals(400, readAccessor(rankedWindows.get(4), "ratingWindow"));
     }
 
     @Test
-    void explicitMapMatchesParentUsesDocumentedDefaults() {
+    void explicitMapParentsUseDocumentedDefaults() {
         Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
                 "config-version", 1,
-                "matches", Map.of())));
+                "matches", Map.of(),
+                "queues", Map.of())));
 
         RevPracConfig config = assertOk(result);
 
@@ -74,6 +108,11 @@ final class LoadValidatedConfigServiceContractTest {
         assertEquals(100, config.matches().countdownTicks());
         assertEquals(12000, config.matches().maxDurationTicks());
         assertTrue(config.matches().spectatorsEnabled());
+        Object queueConfig = readAccessor(config, "queues");
+        assertEquals(20, readAccessor(queueConfig, "matchmakingPeriodTicks"));
+        assertEquals(1000, readAccessor(queueConfig, "rankedBaseRating"));
+        assertEquals(20, readAccessor(queueConfig, "ticksPerSecond"));
+        assertEquals(5, assertInstanceOf(List.class, readAccessor(queueConfig, "rankedWindows")).size());
     }
 
     @Test
@@ -167,6 +206,18 @@ final class LoadValidatedConfigServiceContractTest {
     }
 
     @Test
+    void malformedQueuesParentReturnsConfigurationProblemAtQueuesPath() {
+        Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "queues", "not-a-section")));
+
+        Problem problem = assertErr(result);
+
+        assertEquals(ProblemCategory.CONFIGURATION, problem.category());
+        assertEquals("queues", problem.path());
+    }
+
+    @Test
     void nonPositiveMatchMaxDurationReturnsConfigurationProblemNamingExactPath() {
         Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
                 "config-version", 1,
@@ -190,6 +241,73 @@ final class LoadValidatedConfigServiceContractTest {
     }
 
     @Test
+    void invalidQueueScalarsReturnProblemsNamingExactPaths() {
+        Problem matchmakingPeriodProblem = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "queues.matchmaking-period-ticks", 0))));
+        Problem baseRatingProblem = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "queues.ranked-base-rating", -1))));
+        Problem ticksPerSecondProblem = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "queues.ticks-per-second", "fast"))));
+
+        assertEquals("queues.matchmaking-period-ticks", matchmakingPeriodProblem.path());
+        assertEquals("queues.ranked-base-rating", baseRatingProblem.path());
+        assertEquals("queues.ticks-per-second", ticksPerSecondProblem.path());
+    }
+
+    @Test
+    void invalidRankedWindowsReturnProblemsNamingExactPaths() {
+        Problem listProblem = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "queues.ranked-windows", "not-a-list"))));
+        Problem entryProblem = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "queues.ranked-windows", List.of("bad-entry")))));
+        Problem valueProblem = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "queues.ranked-windows", List.of(Map.of(
+                        "wait-seconds", -1,
+                        "rating-window", 50))))));
+        Problem duplicateProblem = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "queues.ranked-windows", List.of(
+                        Map.of("wait-seconds", 0, "rating-window", 50),
+                        Map.of("wait-seconds", 0, "rating-window", 100))))));
+
+        assertEquals("queues.ranked-windows", listProblem.path());
+        assertEquals("queues.ranked-windows[0]", entryProblem.path());
+        assertEquals("queues.ranked-windows[0].wait-seconds", valueProblem.path());
+        assertEquals("queues.ranked-windows[1].wait-seconds", duplicateProblem.path());
+    }
+
+    @Test
+    void queueConfigDefaultsAndConstructorRejectInvalidWindowDefinitions() throws ReflectiveOperationException {
+        Class<?> queueConfigType = Class.forName(QUEUE_CONFIG_TYPE);
+        Class<?> windowStepType = Class.forName(WINDOW_STEP_TYPE);
+
+        Object defaults = queueConfigType.getMethod("defaults").invoke(null);
+        assertEquals(20, queueConfigType.getMethod("matchmakingPeriodTicks").invoke(defaults));
+        assertEquals(1000, queueConfigType.getMethod("rankedBaseRating").invoke(defaults));
+        assertEquals(20, queueConfigType.getMethod("ticksPerSecond").invoke(defaults));
+        List<?> defaultWindows = assertInstanceOf(List.class, queueConfigType.getMethod("rankedWindows").invoke(defaults));
+        assertEquals(5, defaultWindows.size());
+
+        List<?> unorderedWindows = List.of(
+                instantiateRecord(windowStepType, Map.of("waitSeconds", 10L, "ratingWindow", 100)),
+                instantiateRecord(windowStepType, Map.of("waitSeconds", 5L, "ratingWindow", 150)));
+        InvocationTargetException exception = assertInstanceOf(
+                InvocationTargetException.class,
+                org.junit.jupiter.api.Assertions.assertThrows(
+                        InvocationTargetException.class,
+                        () -> queueConfigType
+                                .getDeclaredConstructor(int.class, int.class, int.class, List.class)
+                                .newInstance(20, 1000, 20, unorderedWindows)));
+        assertInstanceOf(IllegalArgumentException.class, exception.getCause());
+    }
+
+    @Test
     void loadValidatedConfigServiceHasNoBukkitOrPaperDependency() throws IOException {
         Path serviceSource = Path.of("src/main/java/io/github/xreatlabz/revprac/application/config/LoadValidatedConfigService.java");
 
@@ -208,6 +326,14 @@ final class LoadValidatedConfigServiceContractTest {
     private static Problem assertErr(Result<RevPracConfig> result) {
         Err<?> err = assertInstanceOf(Err.class, result, "Expected a failed Result");
         return err.problem();
+    }
+
+    private static Object readAccessor(Object target, String accessorName) {
+        try {
+            return target.getClass().getMethod(accessorName).invoke(target);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("Could not read accessor " + accessorName + " from " + target.getClass().getName(), exception);
+        }
     }
 
     private record MapConfigSource(Map<String, Object> values) implements ConfigSource {

@@ -15,6 +15,7 @@ import io.github.xreatlabz.revprac.adapters.storage.InMemoryKitRegistryRepositor
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryMatchRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionRepository;
+import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueTicketRepository;
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.config.BootstrapConfig;
 import io.github.xreatlabz.revprac.application.config.DiagnosticsConfig;
@@ -23,6 +24,7 @@ import io.github.xreatlabz.revprac.application.matches.DuelRequestService;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
 import io.github.xreatlabz.revprac.application.matches.MatchLifecycleService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
+import io.github.xreatlabz.revprac.application.queues.PlayerAvailabilityService;
 import io.github.xreatlabz.revprac.bootstrap.BootstrapRuntime;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaCuboid;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaDefinition;
@@ -301,7 +303,9 @@ final class RevPracPluginPhase4Test {
         private final ArenaRegistryService arenaRegistryService =
                 new ArenaRegistryService(new InMemoryArenaRegistryRepository(), new NoOpArenaResetPort());
         private final KitRegistryService kitRegistryService = new KitRegistryService(new InMemoryKitRegistryRepository());
+        private final InMemoryDuelRequestRepository duelRequestRepository = new InMemoryDuelRequestRepository();
         private final InMemoryMatchRepository matchRepository = new InMemoryMatchRepository();
+        private final InMemoryQueueTicketRepository queueTicketRepository = new InMemoryQueueTicketRepository();
         private final RecordingMatchPlayerPort matchPlayerPort = new RecordingMatchPlayerPort(shutdownOrder);
         private final MatchLifecycleService matchLifecycleService = new MatchLifecycleService(
                 matchRepository,
@@ -312,13 +316,16 @@ final class RevPracPluginPhase4Test {
                 new MatchRuleset(3, 200, true),
                 event -> {
                 });
+        private final PlayerAvailabilityService availabilityService =
+                new PlayerAvailabilityService(matchRepository, duelRequestRepository, queueTicketRepository);
         private final DuelRequestService duelRequestService = new DuelRequestService(
-                new InMemoryDuelRequestRepository(),
+                duelRequestRepository,
                 matchRepository,
                 arenaRegistryService,
                 kitRegistryService,
                 matchPlayerPort,
                 matchLifecycleService,
+                availabilityService,
                 java.time.Clock.systemUTC(),
                 java.time.Duration.ofSeconds(30),
                 event -> {

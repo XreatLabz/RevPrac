@@ -9,11 +9,13 @@ import io.github.xreatlabz.revprac.adapters.storage.InMemoryKitRegistryRepositor
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryMatchRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionRepository;
+import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueTicketRepository;
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
 import io.github.xreatlabz.revprac.application.matches.DuelRequestService;
 import io.github.xreatlabz.revprac.application.matches.MatchLifecycleService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
+import io.github.xreatlabz.revprac.application.queues.PlayerAvailabilityService;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaCuboid;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaDefinition;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaId;
@@ -216,6 +218,7 @@ final class RevPracDuelCommandTest {
         private final WorldMock world = addKeyedWorld(server, "match-world");
         private final InMemoryDuelRequestRepository requestRepository = new InMemoryDuelRequestRepository();
         private final InMemoryMatchRepository matchRepository = new InMemoryMatchRepository();
+        private final InMemoryQueueTicketRepository queueTicketRepository = new InMemoryQueueTicketRepository();
         private final InMemoryPlayerSessionRepository sessionRepository = new InMemoryPlayerSessionRepository();
         private final PlayerSessionService playerSessionService =
                 new PlayerSessionService(sessionRepository, new InMemoryPendingRestorationRepository(), new SnapshotStatePort());
@@ -232,6 +235,8 @@ final class RevPracDuelCommandTest {
                 new MatchRuleset(3, 200, true),
                 event -> {
                 });
+        private final PlayerAvailabilityService availabilityService =
+                new PlayerAvailabilityService(matchRepository, requestRepository, queueTicketRepository);
         private final DuelRequestService duelRequestService = new DuelRequestService(
                 requestRepository,
                 matchRepository,
@@ -239,6 +244,7 @@ final class RevPracDuelCommandTest {
                 kitRegistryService,
                 matchPlayerPort,
                 matchLifecycleService,
+                availabilityService,
                 Clock.fixed(Instant.parse("2026-05-01T12:00:00Z"), ZoneOffset.UTC),
                 Duration.ofSeconds(30),
                 event -> {
