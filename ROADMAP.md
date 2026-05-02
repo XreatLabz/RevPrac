@@ -38,7 +38,7 @@ RevPrac currently has:
 
 Current repo shape is intentionally small:
 
-- arena and kit registry groundwork exists; the direct duel, queue matchmaking, and match engine are implemented; ranked progression, durable ratings, stats, and durable persistence feature modules are still planned
+- arena and kit registry groundwork exists; the direct duel, queue matchmaking, and match engine are implemented; Phase 6A durable player profile and rating storage is implemented; match-history settlement, stats, seasons, PostgreSQL, and import/export remain planned
 - no Gradle subprojects yet
 - no public plugin API surface yet
 
@@ -285,7 +285,7 @@ Implemented scope:
 - `domain.queues` owns queue modes, keys, tickets, states, and matchmaking-window compatibility
 - `application.queues.QueueService` owns join/leave/status, queue availability gating, queue session transitions, ranked base-rating seeding, and shutdown drainage
 - `application.queues.QueueMatchmakingService` owns deterministic sweeps, unranked FIFO matching, ranked rating-window matching, claim/rollback handling, and queued match handoff
-- `ports.queues` plus in-memory ticket/rating repositories keep active queue tickets and per-player+kit search ratings in memory
+- `ports.queues` plus in-memory repositories keep active queue tickets in memory; Phase 5 originally seeded per-player+kit search ratings in memory before Phase 6A moved player rating seeds to durable storage
 - `adapters.paper.queues` owns the synchronous ticker and quit listener, and `adapters.paper.commands.RevPracQueueCommand` owns `/queue` parsing through standard `plugin.yml`
 - `application.config.QueueConfig` owns `queues.matchmaking-period-ticks`, `queues.ranked-base-rating`, `queues.ticks-per-second`, and `queues.ranked-windows`
 - queued matches are started via `MatchLifecycleService.startQueuedMatch`, which reserves an arena after a pair is claimed instead of reserving one on queue join
@@ -294,7 +294,7 @@ Implemented scope:
 
 Phase boundary:
 
-- queue tickets and queue ratings are runtime-only state; durable ratings, progression, stats, seasons, parties, rematch, public events, metrics, and persistence remain Phase 6+
+- queue tickets are runtime-only state; durable ratings, progression, stats, seasons, parties, rematch, public events, metrics, and broader persistence remain Phase 6+
 - ranked and unranked queues are explicit modes; ranked eligibility is gated by `KitRules.ranked`, but ranked-capable kits can still join unranked queues
 - matchmaking is deterministic: unranked uses FIFO within mode+kit, ranked uses wait-time rating windows with deterministic tie-breakers
 - the Paper queue ticker is synchronous, so `/queue join` records the actual server tick and matchmaking sweeps pass the current server tick into the policy
@@ -318,32 +318,44 @@ Validation:
 
 ### Phase 6: Persistence, Ratings, and Migrations
 
-Status: Planned
+Status: Implemented for Phase 6A
 
 Goal:
 
-- persist profiles, stats, ratings, seasons, and match history
-- use SQLite as the default local store
-- add optional PostgreSQL support
-- add Flyway migrations
-- support import/export for operator workflows
+- introduce the first durable persistence slice for RevPrac: storage config, SQLite-backed migrations, durable player profiles, and durable queue rating seeds
+
+Implemented scope:
+
+- `application.config.StorageConfig` owns `storage.backend`, `storage.sqlite-path`, and `storage.pool-maximum-size`
+- `plugin.yml` declares the runtime libraries for `com.zaxxer:HikariCP:7.0.2`, `org.flywaydb:flyway-core:12.5.0`, and `org.xerial:sqlite-jdbc:3.53.0.0`
+- `JdbcStorageFactory` resolves the SQLite path, creates parent directories, opens HikariCP, runs Flyway migrations from `classpath:db/migration`, and only then exposes repositories
+- `JdbcStorageRuntime` exposes JDBC-backed player profile and player rating repositories
+- `BootstrapRuntime` closes storage after queue, match, and player teardown
+- the current durable data slice covers player profiles and queue rating seeds; active queues, matches, duel requests, player sessions, and pending restorations remain in memory
+
+Phase boundary:
+
+- match-history settlement, stats, seasons, PostgreSQL, and import/export are deferred to later Phase 6 slices
+- storage config is SQLite-only for now; `storage.backend` is validated but does not open a second backend yet
+- migrations must fail closed during bootstrap; the runtime should not start with a broken storage layer
+- durable persistence here is limited to player profiles and ratings, not the broader competitive-history model
 
 Exit criteria:
 
-- persistent data survives restart and reload cycles
+- durable player profiles and ratings survive restart and reload cycles
 - migrations apply cleanly from empty and upgraded states
-- rating updates and season transitions are deterministic
-- persistence adapters are isolated behind ports
+- storage adapters remain isolated behind ports
+- runtime shutdown closes storage after gameplay teardown has completed
 
 Validation:
 
 ```bash
-./gradlew test
+./gradlew test --tests '*LoadValidatedConfigServiceContractTest' --tests '*JdbcStorageFactoryTest' --tests '*RevPracPluginPhase6Test'
 ./gradlew spotlessCheck test jacocoTestReport jar
 ./scripts/smoke-run-paper.sh
 ```
 
-When persistence work lands, add dedicated fixture coverage for temp-dir and Testcontainers-backed runs and keep them wired into `./gradlew test`.
+When the later Phase 6 slices land, add dedicated fixture coverage for temp-dir and Testcontainers-backed PostgreSQL runs and keep them wired into `./gradlew test`.
 
 ### Phase 7: Staff Operations and Integrations
 
