@@ -2,8 +2,6 @@ package io.github.xreatlabz.revprac.application.queues;
 
 import io.github.xreatlabz.revprac.domain.matches.DuelRequest;
 import io.github.xreatlabz.revprac.domain.matches.DuelRequestState;
-import io.github.xreatlabz.revprac.domain.matches.Match;
-import io.github.xreatlabz.revprac.domain.matches.MatchState;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
 import io.github.xreatlabz.revprac.domain.queues.QueueTicket;
 import io.github.xreatlabz.revprac.domain.queues.QueueTicketState;
@@ -43,24 +41,20 @@ public final class PlayerAvailabilityService {
 
     private void requireAvailable(PlayerId playerId, String role) {
         Objects.requireNonNull(playerId, "playerId");
-        if (hasActiveMatch(playerId) || hasPendingDuelRequest(playerId) || isQueued(playerId)) {
+        if (hasRetainedMatch(playerId) || hasPendingDuelRequest(playerId) || isQueued(playerId)) {
             throw new IllegalStateException(role + " is already busy");
         }
     }
 
-    private boolean hasActiveMatch(PlayerId playerId) {
-        return matchRepository.findByPlayer(playerId).filter(PlayerAvailabilityService::isActiveMatch).isPresent()
-                || matchRepository.findBySpectator(playerId).filter(PlayerAvailabilityService::isActiveMatch).isPresent();
+    private boolean hasRetainedMatch(PlayerId playerId) {
+        return matchRepository.findByPlayer(playerId).isPresent()
+                || matchRepository.findBySpectator(playerId).isPresent();
     }
 
     private boolean hasPendingDuelRequest(PlayerId playerId) {
         return duelRequestRepository.findAll().stream()
                 .filter(PlayerAvailabilityService::isPending)
                 .anyMatch(request -> request.requesterId().equals(playerId) || request.targetId().equals(playerId));
-    }
-
-    private static boolean isActiveMatch(Match match) {
-        return match.state() != MatchState.COMPLETED;
     }
 
     private static boolean isPending(DuelRequest request) {

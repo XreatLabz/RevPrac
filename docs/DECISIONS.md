@@ -112,3 +112,12 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: Close the JDBC storage runtime if any bootstrap step after storage creation fails before `RevPracPlugin` receives a `BootstrapRuntime`.
 - Decision: Preserve the stored profile `first_seen_at` on JDBC conflict updates and keep profile `last_seen_at` monotonic when the system clock moves backward.
 - Rationale: Failed enable paths must not leak Hikari resources, and durable player identity timestamps should remain stable even when host time is corrected.
+
+## 2026-05-02: Phase 6B Match History and Stats Settlement
+
+- Decision: Persist completed match history and aggregate per-player per-kit stats as a SQLite/Flyway V2 slice using `match_history` and `player_kit_stats`.
+- Decision: Keep active match state, queue tickets, duel requests, player sessions, and pending restorations in memory; only completed history and stat aggregates are durable in this slice.
+- Decision: Settlement is owned by `MatchLifecycleService` through `MatchSettlementService`, runs after a completed match is saved and before teardown deletes it, captures the completion instant on the retained `Match`, and retries through the same completed-match drain path.
+- Decision: Make settlement idempotent by inserting `match_history` first and applying stat deltas only when that insert creates a new row.
+- Decision: Record `MatchOrigin` for direct duel, ranked queue, and unranked queue history, while leaving rating progression, seasons, PostgreSQL, import/export, rematch, post-match summaries, and player-facing stat commands deferred.
+- Rationale: Completed match data must survive restart without making active gameplay state durable yet, and teardown retry paths must not double-count stats.

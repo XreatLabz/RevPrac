@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -91,14 +92,21 @@ final class MatchAggregateContractTest {
         assertEquals(enumConstant(matchStateType, "ACTIVE"), recordComponentValue(match, "state"));
         assertEquals(0, recordComponentValue(match, "countdownTicksRemaining"));
 
-        Object completed = invokeMethod(match, "complete", invokeStatic(loadClass(MATCH_OUTCOME_TYPE), "win", playerOne(), playerTwo()));
+        Instant completedAt = Instant.parse("2026-05-02T15:00:00Z");
+        Object completed =
+                invokeMethod(match, "complete", invokeStatic(loadClass(MATCH_OUTCOME_TYPE), "win", playerOne(), playerTwo()), completedAt);
         assertEquals(enumConstant(matchStateType, "COMPLETED"), recordComponentValue(completed, "state"));
         assertEquals(
                 Optional.of(invokeStatic(loadClass(MATCH_OUTCOME_TYPE), "win", playerOne(), playerTwo())),
                 recordComponentValue(completed, "outcome"));
+        assertEquals(Optional.of(completedAt), recordComponentValue(completed, "completedAt"));
 
         assertIllegalState(
-                () -> invokeMethod(completed, "complete", invokeStatic(loadClass(MATCH_OUTCOME_TYPE), "forfeit", playerTwo(), playerOne())),
+                () -> invokeMethod(
+                        completed,
+                        "complete",
+                        invokeStatic(loadClass(MATCH_OUTCOME_TYPE), "forfeit", playerTwo(), playerOne()),
+                        Instant.parse("2026-05-02T15:01:00Z")),
                 "Match should complete exactly once");
     }
 
@@ -114,7 +122,11 @@ final class MatchAggregateContractTest {
         assertFalse(spectators.contains(playerOne()), "Spectators must stay separate from participants");
         assertThrows(UnsupportedOperationException.class, () -> addToSet(spectators, spectator));
 
-        Object completed = invokeMethod(withSpectator, "complete", invokeStatic(loadClass(MATCH_OUTCOME_TYPE), "shutdown"));
+        Object completed = invokeMethod(
+                withSpectator,
+                "complete",
+                invokeStatic(loadClass(MATCH_OUTCOME_TYPE), "shutdown"),
+                Instant.parse("2026-05-02T15:02:00Z"));
         assertIllegalState(
                 () -> invokeMethod(completed, "addSpectator", playerId("86e15c52-e18f-4920-9d5a-6ac76ff69ca1")),
                 "Completed matches must reject new spectator mutations");
@@ -142,22 +154,22 @@ final class MatchAggregateContractTest {
 
         Object outsiderWinner = invokeStatic(outcomeType, "win", outsider, playerOne());
         assertIllegalArgument(
-                () -> invokeMethod(activeMatch, "complete", outsiderWinner),
+                () -> invokeMethod(activeMatch, "complete", outsiderWinner, Instant.parse("2026-05-02T15:03:00Z")),
                 "Match must reject win outcomes with an outsider winner");
 
         Object outsiderLoser = invokeStatic(outcomeType, "win", playerOne(), outsider);
         assertIllegalArgument(
-                () -> invokeMethod(activeMatch, "complete", outsiderLoser),
+                () -> invokeMethod(activeMatch, "complete", outsiderLoser, Instant.parse("2026-05-02T15:03:00Z")),
                 "Match must reject win outcomes with an outsider loser");
 
         Object outsiderForfeitWinner = invokeStatic(outcomeType, "forfeit", outsider, playerTwo());
         assertIllegalArgument(
-                () -> invokeMethod(activeMatch, "complete", outsiderForfeitWinner),
+                () -> invokeMethod(activeMatch, "complete", outsiderForfeitWinner, Instant.parse("2026-05-02T15:03:00Z")),
                 "Match must reject forfeit outcomes with an outsider winner");
 
         Object outsiderForfeitLoser = invokeStatic(outcomeType, "forfeit", playerTwo(), outsider);
         assertIllegalArgument(
-                () -> invokeMethod(activeMatch, "complete", outsiderForfeitLoser),
+                () -> invokeMethod(activeMatch, "complete", outsiderForfeitLoser, Instant.parse("2026-05-02T15:03:00Z")),
                 "Match must reject forfeit outcomes with an outsider loser");
     }
 
@@ -167,20 +179,36 @@ final class MatchAggregateContractTest {
         Class<?> outcomeType = loadClass(MATCH_OUTCOME_TYPE);
 
         Object winMatch = invokeMethod(createMatch(ruleset), "tickCountdown");
-        Object winCompleted = invokeMethod(winMatch, "complete", invokeStatic(outcomeType, "win", playerOne(), playerTwo()));
+        Object winCompleted = invokeMethod(
+                winMatch,
+                "complete",
+                invokeStatic(outcomeType, "win", playerOne(), playerTwo()),
+                Instant.parse("2026-05-02T15:04:00Z"));
         assertEquals(enumConstant(loadClass(MATCH_STATE_TYPE), "COMPLETED"), recordComponentValue(winCompleted, "state"));
 
         Object forfeitMatch = invokeMethod(createMatch(ruleset), "tickCountdown");
         Object forfeitCompleted =
-                invokeMethod(forfeitMatch, "complete", invokeStatic(outcomeType, "forfeit", playerTwo(), playerOne()));
+                invokeMethod(
+                        forfeitMatch,
+                        "complete",
+                        invokeStatic(outcomeType, "forfeit", playerTwo(), playerOne()),
+                        Instant.parse("2026-05-02T15:04:00Z"));
         assertEquals(enumConstant(loadClass(MATCH_STATE_TYPE), "COMPLETED"), recordComponentValue(forfeitCompleted, "state"));
 
         Object timeoutMatch = invokeMethod(createMatch(ruleset), "tickCountdown");
-        Object timeoutCompleted = invokeMethod(timeoutMatch, "complete", invokeStatic(outcomeType, "timeout"));
+        Object timeoutCompleted = invokeMethod(
+                timeoutMatch,
+                "complete",
+                invokeStatic(outcomeType, "timeout"),
+                Instant.parse("2026-05-02T15:04:00Z"));
         assertEquals(enumConstant(loadClass(MATCH_STATE_TYPE), "COMPLETED"), recordComponentValue(timeoutCompleted, "state"));
 
         Object shutdownMatch = invokeMethod(createMatch(ruleset), "tickCountdown");
-        Object shutdownCompleted = invokeMethod(shutdownMatch, "complete", invokeStatic(outcomeType, "shutdown"));
+        Object shutdownCompleted = invokeMethod(
+                shutdownMatch,
+                "complete",
+                invokeStatic(outcomeType, "shutdown"),
+                Instant.parse("2026-05-02T15:04:00Z"));
         assertEquals(enumConstant(loadClass(MATCH_STATE_TYPE), "COMPLETED"), recordComponentValue(shutdownCompleted, "state"));
     }
 
@@ -189,12 +217,14 @@ final class MatchAggregateContractTest {
         Object match = createMatch(instantiateRecord(loadClass(MATCH_RULESET_TYPE), rulesetValues(1, 2, false)));
         match = invokeMethod(match, "tickCountdown");
 
-        match = invokeMethod(match, "tickActive");
+        match = invokeMethod(match, "tickActive", Instant.parse("2026-05-02T15:04:30Z"));
         assertEquals(enumConstant(loadClass(MATCH_STATE_TYPE), "ACTIVE"), recordComponentValue(match, "state"));
         assertEquals(1, recordComponentValue(match, "activeTicksElapsed"));
 
-        match = invokeMethod(match, "tickActive");
+        Instant completedAt = Instant.parse("2026-05-02T15:05:00Z");
+        match = invokeMethod(match, "tickActive", completedAt);
         assertEquals(enumConstant(loadClass(MATCH_STATE_TYPE), "COMPLETED"), recordComponentValue(match, "state"));
+        assertEquals(Optional.of(completedAt), recordComponentValue(match, "completedAt"));
 
         Optional<?> outcome = assertInstanceOf(Optional.class, recordComponentValue(match, "outcome"));
         Object completedOutcome = outcome.orElseThrow();

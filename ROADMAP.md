@@ -318,31 +318,35 @@ Validation:
 
 ### Phase 6: Persistence, Ratings, and Migrations
 
-Status: Implemented for Phase 6A
+Status: Implemented for Phase 6A and Phase 6B
 
 Goal:
 
-- introduce the first durable persistence slice for RevPrac: storage config, SQLite-backed migrations, durable player profiles, and durable queue rating seeds
+- introduce the first durable persistence slices for RevPrac: storage config, SQLite-backed migrations, durable player profiles, durable queue rating seeds, completed match history, and basic per-player per-kit stats
 
 Implemented scope:
 
 - `application.config.StorageConfig` owns `storage.backend`, `storage.sqlite-path`, and `storage.pool-maximum-size`
 - `plugin.yml` declares the runtime libraries for `com.zaxxer:HikariCP:7.0.2`, `org.flywaydb:flyway-core:12.5.0`, and `org.xerial:sqlite-jdbc:3.53.0.0`
 - `JdbcStorageFactory` resolves the SQLite path, creates parent directories, opens HikariCP, runs Flyway migrations from `classpath:db/migration`, and only then exposes repositories
-- `JdbcStorageRuntime` exposes JDBC-backed player profile and player rating repositories
+- `JdbcStorageRuntime` exposes JDBC-backed player profile, player rating, and match settlement repositories
 - `BootstrapRuntime` closes storage after queue, match, and player teardown
-- the current durable data slice covers player profiles and queue rating seeds; active queues, matches, duel requests, player sessions, and pending restorations remain in memory
+- the durable data slices cover player profiles, queue rating seeds, completed match history, and aggregate player-kit stats
+- `MatchLifecycleService` captures a completion instant, settles completed matches before teardown, and preserves that completion time across retry; settlement failure retains the completed match and prevents teardown from returning players early
+- match history records direct duel, ranked queue, and unranked queue origins through `MatchOrigin`
+- active queues, active matches, duel requests, player sessions, and pending restorations remain in memory
 
 Phase boundary:
 
-- match-history settlement, stats, seasons, PostgreSQL, and import/export are deferred to later Phase 6 slices
+- seasons, PostgreSQL, import/export, rating progression updates, post-match summaries, rematch, and player-facing stat commands are deferred to later slices
 - storage config is SQLite-only for now; `storage.backend` is validated but does not open a second backend yet
 - migrations must fail closed during bootstrap; the runtime should not start with a broken storage layer
-- durable persistence here is limited to player profiles and ratings, not the broader competitive-history model
+- durable persistence here does not include active match recovery, active queue recovery, season partitioning, or command/query surfaces for match history
 
 Exit criteria:
 
 - durable player profiles and ratings survive restart and reload cycles
+- completed match history and aggregate player-kit stats survive restart and duplicate settlement retries without double-counting
 - migrations apply cleanly from empty and upgraded states
 - storage adapters remain isolated behind ports
 - runtime shutdown closes storage after gameplay teardown has completed
@@ -350,7 +354,9 @@ Exit criteria:
 Validation:
 
 ```bash
-./gradlew test --tests '*LoadValidatedConfigServiceContractTest' --tests '*JdbcStorageFactoryTest' --tests '*RevPracPluginPhase6Test'
+./gradlew test --tests '*LoadValidatedConfigServiceContractTest' --tests '*MatchHistoryEntryTest' --tests '*PlayerKitStatsTest' --tests '*MatchSettlementServiceTest'
+./gradlew test --tests '*MatchLifecycleServiceTest' --tests '*PlayerAvailabilityServiceTest'
+./gradlew test --tests '*JdbcStorageFactoryTest' --tests '*RevPracPluginPhase6Test'
 ./gradlew spotlessCheck test jacocoTestReport jar
 ./scripts/smoke-run-paper.sh
 ```

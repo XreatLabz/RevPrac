@@ -59,7 +59,7 @@ final class PlayerAvailabilityServiceTest {
     }
 
     @Test
-    void activeMatchParticipantsAndSpectatorsAreBusyButCompletedMatchesAreIgnored() {
+    void retainedMatchParticipantsAndSpectatorsAreBusyUntilTheMatchIsDeleted() {
         Harness participantHarness = new Harness();
         Match activeMatch = match("active", ruleset(true));
         assertTrue(participantHarness.matchRepository.create(activeMatch));
@@ -85,9 +85,16 @@ final class PlayerAvailabilityServiceTest {
         Match completed = match("completed", ruleset(true))
                 .tickCountdown()
                 .tickCountdown()
-                .complete(MatchOutcome.shutdown());
+                .complete(MatchOutcome.shutdown(), Instant.parse("2026-05-02T15:10:00Z"));
         completedHarness.matchRepository.save(completed);
 
+        IllegalStateException completedBusy = assertThrows(
+                IllegalStateException.class,
+                () -> completedHarness.availabilityService.requireAvailableForQueue(
+                        completed.participants().playerOne()));
+        assertEquals("player is already busy", completedBusy.getMessage());
+
+        completedHarness.matchRepository.delete(completed.id());
         assertDoesNotThrow(() -> completedHarness.availabilityService.requireAvailableForQueue(
                 completed.participants().playerOne()));
     }

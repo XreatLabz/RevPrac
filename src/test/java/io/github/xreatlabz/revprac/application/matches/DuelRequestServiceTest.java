@@ -19,6 +19,7 @@ import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaCuboid;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaDefinition;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaId;
+import io.github.xreatlabz.revprac.domain.arenas.ArenaReservationId;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaSpawnPoint;
 import io.github.xreatlabz.revprac.domain.kits.KitDefinition;
 import io.github.xreatlabz.revprac.domain.kits.KitId;
@@ -29,6 +30,9 @@ import io.github.xreatlabz.revprac.domain.matches.DuelRequestId;
 import io.github.xreatlabz.revprac.domain.matches.DuelRequestState;
 import io.github.xreatlabz.revprac.domain.matches.Match;
 import io.github.xreatlabz.revprac.domain.matches.MatchEvent;
+import io.github.xreatlabz.revprac.domain.matches.MatchId;
+import io.github.xreatlabz.revprac.domain.matches.MatchOutcome;
+import io.github.xreatlabz.revprac.domain.matches.MatchParticipants;
 import io.github.xreatlabz.revprac.domain.matches.MatchRuleset;
 import io.github.xreatlabz.revprac.domain.players.InventorySnapshot;
 import io.github.xreatlabz.revprac.domain.players.LocationSnapshot;
@@ -208,6 +212,24 @@ final class DuelRequestServiceTest {
                 DuelRequestState.PENDING,
                 targetHarness.requestRepository.find(targetRequest.id()).orElseThrow().state());
         assertTrue(targetHarness.matchRepository.findAll().isEmpty());
+    }
+
+    @Test
+    void acceptRejectsRetainedCompletedMatchUntilItIsDrained() {
+        Harness harness = new Harness(new AdjustableClock(Instant.parse("2026-05-01T12:00:00Z")));
+        harness.join(harness.requester());
+        harness.join(harness.target());
+        DuelRequest request = harness.duelRequestService.request(
+                harness.requester(), harness.target(), harness.arenaId(), harness.kitId());
+        harness.matchRepository.save(retainedCompletedMatch(harness));
+
+        IllegalStateException busy = assertThrows(
+                IllegalStateException.class,
+                () -> harness.duelRequestService.accept(harness.requester(), harness.target()));
+
+        assertEquals("requester is already busy", busy.getMessage());
+        assertEquals(DuelRequestState.PENDING, harness.requestRepository.find(request.id()).orElseThrow().state());
+        assertEquals(1, harness.matchRepository.findAll().size());
     }
 
     @Test
@@ -559,6 +581,18 @@ final class DuelRequestServiceTest {
                     new KitRules(false, false, false, false),
                     true);
         }
+    }
+
+    private static Match retainedCompletedMatch(Harness harness) {
+        return Match.create(
+                        new MatchId(UUID.nameUUIDFromBytes("retained-completed-match".getBytes())),
+                        new MatchParticipants(harness.requester(), harness.target()),
+                        harness.arenaId(),
+                        harness.kitId(),
+                        new ArenaReservationId(UUID.nameUUIDFromBytes("retained-reservation".getBytes())),
+                        new MatchRuleset(1, 10, true))
+                .tickCountdown()
+                .complete(MatchOutcome.shutdown(), Instant.parse("2026-05-02T15:10:00Z"));
     }
 
     private static final class AdjustableClock extends Clock {

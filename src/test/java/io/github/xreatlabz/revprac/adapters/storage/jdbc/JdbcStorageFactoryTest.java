@@ -6,10 +6,19 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.xreatlabz.revprac.application.config.StorageConfig;
+import io.github.xreatlabz.revprac.domain.arenas.ArenaId;
 import io.github.xreatlabz.revprac.domain.kits.KitId;
+import io.github.xreatlabz.revprac.domain.matches.MatchEndReason;
+import io.github.xreatlabz.revprac.domain.matches.MatchHistoryEntry;
+import io.github.xreatlabz.revprac.domain.matches.MatchId;
+import io.github.xreatlabz.revprac.domain.matches.MatchOrigin;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
 import io.github.xreatlabz.revprac.domain.players.PlayerProfile;
 import io.github.xreatlabz.revprac.domain.ratings.PlayerRating;
+import io.github.xreatlabz.revprac.domain.stats.MatchSettlement;
+import io.github.xreatlabz.revprac.domain.stats.PlayerKitStatDelta;
+import io.github.xreatlabz.revprac.domain.stats.PlayerKitStats;
+import io.github.xreatlabz.revprac.ports.matches.MatchSettlementRepository;
 import io.github.xreatlabz.revprac.ports.players.PlayerProfileRepository;
 import io.github.xreatlabz.revprac.ports.ratings.PlayerRatingRepository;
 import java.lang.reflect.InvocationTargetException;
@@ -22,6 +31,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -41,7 +51,10 @@ final class JdbcStorageFactoryTest {
             assertTrue(tableExists(storage.databasePath(), "flyway_schema_history"));
             assertTrue(tableExists(storage.databasePath(), "player_profiles"));
             assertTrue(tableExists(storage.databasePath(), "player_ratings"));
+            assertTrue(tableExists(storage.databasePath(), "match_history"));
+            assertTrue(tableExists(storage.databasePath(), "player_kit_stats"));
             assertEquals(1L, countSuccessfulMigrationRows(storage.databasePath(), "1"));
+            assertEquals(1L, countSuccessfulMigrationRows(storage.databasePath(), "2"));
         }
     }
 
@@ -67,6 +80,57 @@ final class JdbcStorageFactoryTest {
     }
 
     @Test
+    void matchSettlementsSurviveCloseAndDuplicateRecordsAreIdempotent() throws Exception {
+        Path dataFolder = tempDir.resolve("plugin-data");
+        PlayerId winnerId = player("settlement-winner");
+        PlayerId loserId = player("settlement-loser");
+        KitId kitId = new KitId("nodebuff");
+        MatchId matchId = new MatchId(UUID.nameUUIDFromBytes("settlement-match".getBytes(StandardCharsets.UTF_8)));
+        Instant completedAt = Instant.ofEpochMilli(8_000L);
+        MatchSettlement settlement = new MatchSettlement(
+                new MatchHistoryEntry(
+                        matchId,
+                        winnerId,
+                        loserId,
+                        new ArenaId("arena-ranked"),
+                        kitId,
+                        MatchOrigin.QUEUE_RANKED,
+                        MatchEndReason.WIN,
+                        Optional.of(winnerId),
+                        Optional.of(loserId),
+                        47,
+                        completedAt),
+                List.of(
+                        new PlayerKitStatDelta(winnerId, kitId, 1, 1, 0, 0, 0, 0, completedAt),
+                        new PlayerKitStatDelta(loserId, kitId, 1, 0, 1, 0, 0, 0, completedAt)));
+
+        try (StorageHandle storage = openStorage(dataFolder, "storage/revprac.db")) {
+            storage.matchSettlements().record(settlement);
+            storage.matchSettlements().record(settlement);
+
+            assertEquals(1L, countRows(storage.databasePath(), "match_history"));
+            assertEquals(2L, countRows(storage.databasePath(), "player_kit_stats"));
+        }
+
+        try (StorageHandle reopened = openStorage(dataFolder, "storage/revprac.db")) {
+            MatchHistoryEntry history = reopened.matchSettlements().findHistory(matchId).orElseThrow();
+            assertEquals(MatchOrigin.QUEUE_RANKED, history.origin());
+            assertEquals(MatchEndReason.WIN, history.endReason());
+            assertEquals(Optional.of(winnerId), history.winnerId());
+            assertEquals(47, history.activeTicks());
+
+            PlayerKitStats winnerStats = reopened.matchSettlements().findStats(winnerId, kitId).orElseThrow();
+            PlayerKitStats loserStats = reopened.matchSettlements().findStats(loserId, kitId).orElseThrow();
+            assertEquals(1L, winnerStats.matchesPlayed());
+            assertEquals(1L, winnerStats.wins());
+            assertEquals(0L, winnerStats.losses());
+            assertEquals(1L, loserStats.matchesPlayed());
+            assertEquals(0L, loserStats.wins());
+            assertEquals(1L, loserStats.losses());
+        }
+    }
+
+    @Test
     void reopeningExistingDatabaseDoesNotReplayCurrentSchemaMigration() throws Exception {
         Path dataFolder = tempDir.resolve("plugin-data");
 
@@ -77,6 +141,7 @@ final class JdbcStorageFactoryTest {
         try (StorageHandle reopened = openStorage(dataFolder, "storage/revprac.db")) {
             assertTrue(reopened.databasePath().toFile().isFile());
             assertEquals(1L, countSuccessfulMigrationRows(reopened.databasePath(), "1"));
+            assertEquals(1L, countSuccessfulMigrationRows(reopened.databasePath(), "2"));
         }
     }
 
@@ -259,6 +324,11 @@ final class JdbcStorageFactoryTest {
         private PlayerRatingRepository playerRatings() throws Exception {
             Method method = runtime.getClass().getMethod("playerRatingRepository");
             return (PlayerRatingRepository) invoke(method, runtime);
+        }
+
+        private MatchSettlementRepository matchSettlements() throws Exception {
+            Method method = runtime.getClass().getMethod("matchSettlementRepository");
+            return (MatchSettlementRepository) invoke(method, runtime);
         }
 
         @Override

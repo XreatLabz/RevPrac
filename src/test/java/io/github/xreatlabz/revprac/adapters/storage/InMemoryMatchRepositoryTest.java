@@ -57,15 +57,18 @@ final class InMemoryMatchRepositoryTest {
     }
 
     @Test
-    void createAllowsPlayersRetainedOnlyInCompletedMatches() {
+    void createRejectsPlayersRetainedInCompletedMatchesUntilDeletion() {
         MatchRepository repository = new InMemoryMatchRepository();
         Match completed = match("retained", ruleset(true))
                 .tickCountdown()
                 .tickCountdown()
-                .complete(MatchOutcome.shutdown());
+                .complete(MatchOutcome.shutdown(), java.time.Instant.parse("2026-05-02T15:10:00Z"));
         repository.save(completed);
 
         Match retryMatch = matchWithPlayers("retry", completed.participants(), ruleset(true));
+
+        assertFalse(repository.create(retryMatch));
+        repository.delete(completed.id());
 
         assertTrue(repository.create(retryMatch));
         assertEquals(retryMatch, repository.find(retryMatch.id()).orElseThrow());

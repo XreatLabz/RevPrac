@@ -69,10 +69,15 @@ final class RevPracPluginPhase6Test {
         Object ratingService = field(runtime.queueService(), "ratingService");
         Object ratingStore = field(ratingService, "ratingStore");
         Object playerRatingRepository = field(ratingStore, "playerRatingRepository");
+        Object matchSettlementService = field(runtime.matchLifecycleService(), "matchSettlementService");
+        Object matchSettlementRepository = field(matchSettlementService, "matchSettlementRepository");
 
         assertEquals(
                 "io.github.xreatlabz.revprac.adapters.storage.jdbc.JdbcPlayerRatingRepository",
                 playerRatingRepository.getClass().getName());
+        assertEquals(
+                "io.github.xreatlabz.revprac.adapters.storage.jdbc.JdbcMatchSettlementRepository",
+                matchSettlementRepository.getClass().getName());
     }
 
     @Test

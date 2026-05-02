@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryArenaRegistryRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryKitRegistryRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryMatchRepository;
+import io.github.xreatlabz.revprac.adapters.storage.InMemoryMatchSettlementRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionRepository;
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
@@ -28,6 +29,9 @@ import io.github.xreatlabz.revprac.domain.matches.DuelRequestState;
 import io.github.xreatlabz.revprac.domain.matches.Match;
 import io.github.xreatlabz.revprac.domain.matches.MatchEndReason;
 import io.github.xreatlabz.revprac.domain.matches.MatchEvent;
+import io.github.xreatlabz.revprac.domain.matches.MatchHistoryEntry;
+import io.github.xreatlabz.revprac.domain.matches.MatchId;
+import io.github.xreatlabz.revprac.domain.matches.MatchOrigin;
 import io.github.xreatlabz.revprac.domain.matches.MatchOutcome;
 import io.github.xreatlabz.revprac.domain.matches.MatchRuleset;
 import io.github.xreatlabz.revprac.domain.players.InventorySnapshot;
@@ -37,16 +41,23 @@ import io.github.xreatlabz.revprac.domain.players.PlayerId;
 import io.github.xreatlabz.revprac.domain.players.PlayerSafetySnapshot;
 import io.github.xreatlabz.revprac.domain.players.PlayerStatusSnapshot;
 import io.github.xreatlabz.revprac.domain.players.TransitionReason;
+import io.github.xreatlabz.revprac.domain.queues.QueueMode;
+import io.github.xreatlabz.revprac.domain.stats.MatchSettlement;
+import io.github.xreatlabz.revprac.domain.stats.PlayerKitStats;
 import io.github.xreatlabz.revprac.ports.arenas.ArenaResetPort;
 import io.github.xreatlabz.revprac.ports.matches.MatchPlayerPort;
+import io.github.xreatlabz.revprac.ports.matches.MatchSettlementRepository;
 import io.github.xreatlabz.revprac.ports.players.PlayerStatePort;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -132,6 +143,56 @@ final class MatchLifecycleServiceTest {
 
         assertTrue(harness.matchRepository.find(match.id()).isEmpty(), "Successful retry should drain the completed match");
         assertEquals(1, harness.arenaResetPort.resetCalls.size(), "Retry should release the arena exactly once");
+    }
+
+    @Test
+    void completionSettlesHistoryAndStatsBeforeDeletingTheMatch() {
+        Harness harness = new Harness(new MatchRuleset(1, 8, true));
+        Match match = harness.startAcceptedDuel();
+        harness.matchLifecycleService.tick();
+
+        harness.matchLifecycleService.completeByDeath(harness.target());
+
+        assertTrue(harness.matchRepository.find(match.id()).isEmpty(), "Successful drain should delete the match");
+        MatchHistoryEntry history = harness.settlementStore().findHistory(match.id()).orElseThrow();
+        assertEquals(MatchOrigin.DIRECT_DUEL, history.origin());
+        assertEquals(MatchEndReason.WIN, history.endReason());
+        assertEquals(java.util.Optional.of(harness.requester()), history.winnerId());
+        assertEquals(1, harness.settlementStore().findStats(harness.requester(), harness.kitId()).orElseThrow().wins());
+        assertEquals(1, harness.settlementStore().findStats(harness.target(), harness.kitId()).orElseThrow().losses());
+    }
+
+    @Test
+    void settlementFailureRetainsCompletedMatchForSettlementAndTeardownRetry() {
+        FailingMatchSettlementRepository settlementRepository = new FailingMatchSettlementRepository();
+        MutableClock clock = new MutableClock(Instant.parse("2026-05-02T14:30:00Z"));
+        Harness harness = new Harness(new MatchRuleset(1, 8, true), settlementRepository, clock);
+        Match match = harness.startAcceptedDuel();
+        harness.matchLifecycleService.tick();
+
+        IllegalStateException failure = assertThrows(
+                IllegalStateException.class,
+                () -> harness.matchLifecycleService.completeByDeath(harness.target()));
+
+        assertEquals("settlement failed once", failure.getMessage());
+        Match retained = harness.matchRepository.find(match.id()).orElseThrow();
+        assertEquals("COMPLETED", retained.state().name());
+        assertEquals(PlayerContext.MATCH, harness.playerSessions.find(harness.requester()).orElseThrow().context());
+        assertEquals(PlayerContext.MATCH, harness.playerSessions.find(harness.target()).orElseThrow().context());
+        assertEquals(List.of(), harness.matchPlayerPort.clearedPlayers);
+        assertEquals(0, harness.arenaResetPort.resetCalls.size());
+
+        clock.advanceTo(Instant.parse("2026-05-02T14:45:00Z"));
+        harness.matchLifecycleService.tearDown(match.id());
+
+        assertTrue(harness.matchRepository.find(match.id()).isEmpty(), "Retry should settle and teardown the match");
+        assertEquals(2, settlementRepository.recordAttempts);
+        assertEquals(
+                Instant.parse("2026-05-02T14:30:00Z"),
+                settlementRepository.delegate.findHistory(match.id()).orElseThrow().completedAt());
+        assertEquals(1, settlementRepository.delegate.findStats(harness.requester(), harness.kitId()).orElseThrow().wins());
+        assertEquals(1, settlementRepository.delegate.findStats(harness.target(), harness.kitId()).orElseThrow().losses());
+        assertEquals(1, harness.arenaResetPort.resetCalls.size());
     }
 
     @Test
@@ -389,9 +450,10 @@ final class MatchLifecycleServiceTest {
         selectionHarness.reserveArena("arena-a", "busy");
 
         Match match = selectionHarness.matchLifecycleService.startQueuedMatch(
-                selectionHarness.requester(), selectionHarness.target(), selectionHarness.kitId());
+                selectionHarness.requester(), selectionHarness.target(), selectionHarness.kitId(), QueueMode.RANKED);
 
         assertEquals(new ArenaId("arena-one"), match.arenaId());
+        assertEquals(MatchOrigin.QUEUE_RANKED, match.origin());
         assertEquals(PlayerContext.MATCH, selectionHarness.playerSessions.find(selectionHarness.requester()).orElseThrow().context());
         assertEquals(PlayerContext.MATCH, selectionHarness.playerSessions.find(selectionHarness.target()).orElseThrow().context());
     }
@@ -496,6 +558,7 @@ final class MatchLifecycleServiceTest {
         private final PlayerSessionService playerSessionService =
                 new PlayerSessionService(playerSessions, new InMemoryPendingRestorationRepository(), playerStatePort);
         private final FakeMatchPlayerPort matchPlayerPort = new FakeMatchPlayerPort();
+        private final MatchSettlementRepository settlementRepository;
         private final List<MatchEvent> events = new ArrayList<>();
         private final MatchLifecycleService matchLifecycleService;
         private final MatchRuleset ruleset;
@@ -506,7 +569,37 @@ final class MatchLifecycleServiceTest {
         }
 
         private Harness(MatchRuleset ruleset, java.util.function.Consumer<MatchEvent> eventSink) {
+            this(ruleset, new InMemoryMatchSettlementRepository(), eventSink);
+        }
+
+        private Harness(MatchRuleset ruleset, MatchSettlementRepository settlementRepository) {
+            this(ruleset, settlementRepository, event -> {
+            });
+        }
+
+        private Harness(MatchRuleset ruleset, MatchSettlementRepository settlementRepository, Clock clock) {
+            this(ruleset, settlementRepository, clock, event -> {
+            });
+        }
+
+        private Harness(
+                MatchRuleset ruleset,
+                MatchSettlementRepository settlementRepository,
+                java.util.function.Consumer<MatchEvent> eventSink) {
+            this(
+                    ruleset,
+                    settlementRepository,
+                    Clock.fixed(Instant.parse("2026-05-02T14:30:00Z"), ZoneOffset.UTC),
+                    eventSink);
+        }
+
+        private Harness(
+                MatchRuleset ruleset,
+                MatchSettlementRepository settlementRepository,
+                Clock clock,
+                java.util.function.Consumer<MatchEvent> eventSink) {
             this.ruleset = ruleset;
+            this.settlementRepository = settlementRepository;
             this.matchLifecycleService = new MatchLifecycleService(
                     matchRepository,
                     playerSessionService,
@@ -514,6 +607,8 @@ final class MatchLifecycleServiceTest {
                     kitRegistryService,
                     matchPlayerPort,
                     ruleset,
+                    new MatchSettlementService(settlementRepository),
+                    clock,
                     event -> {
                         events.add(event);
                         eventSink.accept(event);
@@ -524,6 +619,10 @@ final class MatchLifecycleServiceTest {
             playerStatePort.onlinePlayers.addAll(Set.of(requester(), target(), spectator()));
             join(requester());
             join(target());
+        }
+
+        private InMemoryMatchSettlementRepository settlementStore() {
+            return (InMemoryMatchSettlementRepository) settlementRepository;
         }
 
         private PlayerId requester() {
@@ -614,6 +713,33 @@ final class MatchLifecycleServiceTest {
 
         private void registerKit(KitId kitId, boolean enabled) {
             kitRegistryService.register(kitDefinition(kitId, kitId.value(), enabled));
+        }
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant instant;
+
+        private MutableClock(Instant instant) {
+            this.instant = instant;
+        }
+
+        private void advanceTo(Instant instant) {
+            this.instant = instant;
+        }
+
+        @Override
+        public ZoneOffset getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
         }
     }
 
@@ -738,6 +864,32 @@ final class MatchLifecycleServiceTest {
 
         private void failPrepareSpectatorFor(PlayerId playerId, String message) {
             spectatorPrepareFailures.put(playerId, new IllegalStateException(message));
+        }
+    }
+
+    private static final class FailingMatchSettlementRepository implements MatchSettlementRepository {
+        private final InMemoryMatchSettlementRepository delegate = new InMemoryMatchSettlementRepository();
+        private int recordAttempts;
+        private boolean failNextRecord = true;
+
+        @Override
+        public void record(MatchSettlement settlement) {
+            recordAttempts++;
+            if (failNextRecord) {
+                failNextRecord = false;
+                throw new IllegalStateException("settlement failed once");
+            }
+            delegate.record(settlement);
+        }
+
+        @Override
+        public Optional<MatchHistoryEntry> findHistory(MatchId matchId) {
+            return delegate.findHistory(matchId);
+        }
+
+        @Override
+        public Optional<PlayerKitStats> findStats(PlayerId playerId, KitId kitId) {
+            return delegate.findStats(playerId, kitId);
         }
     }
 
