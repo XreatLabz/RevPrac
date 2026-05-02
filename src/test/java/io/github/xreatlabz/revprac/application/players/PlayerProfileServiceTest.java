@@ -48,6 +48,42 @@ final class PlayerProfileServiceTest {
         assertEquals(profile, repository.find(playerId).orElseThrow());
     }
 
+    @Test
+    void touchKeepsLastSeenStableWhenTheClockMovesBackward() {
+        FakePlayerProfileRepository repository = new FakePlayerProfileRepository();
+        PlayerProfileService service = new PlayerProfileService(repository);
+        PlayerId playerId = player("clock-rollback-profile");
+        Instant firstSeenAt = Instant.parse("2026-05-02T10:00:00Z");
+        Instant previousLastSeenAt = Instant.parse("2026-05-02T11:00:00Z");
+        Instant rolledBackSeenAt = Instant.parse("2026-05-02T09:30:00Z");
+        repository.upsert(new PlayerProfile(playerId, Optional.of("OldName"), firstSeenAt, previousLastSeenAt));
+
+        PlayerProfile profile = service.touch(playerId, "NewName", rolledBackSeenAt);
+
+        assertEquals(Optional.of("NewName"), profile.lastKnownName());
+        assertEquals(firstSeenAt, profile.firstSeenAt());
+        assertEquals(previousLastSeenAt, profile.lastSeenAt());
+        assertEquals(profile, repository.find(playerId).orElseThrow());
+    }
+
+    @Test
+    void touchDoesNotRegressLastSeenWhenRolledBackTimeStillFollowsFirstSeen() {
+        FakePlayerProfileRepository repository = new FakePlayerProfileRepository();
+        PlayerProfileService service = new PlayerProfileService(repository);
+        PlayerId playerId = player("clock-rollback-after-first-seen-profile");
+        Instant firstSeenAt = Instant.parse("2026-05-02T10:00:00Z");
+        Instant previousLastSeenAt = Instant.parse("2026-05-02T11:00:00Z");
+        Instant rolledBackSeenAt = Instant.parse("2026-05-02T10:30:00Z");
+        repository.upsert(new PlayerProfile(playerId, Optional.of("OldName"), firstSeenAt, previousLastSeenAt));
+
+        PlayerProfile profile = service.touch(playerId, "NewName", rolledBackSeenAt);
+
+        assertEquals(Optional.of("NewName"), profile.lastKnownName());
+        assertEquals(firstSeenAt, profile.firstSeenAt());
+        assertEquals(previousLastSeenAt, profile.lastSeenAt());
+        assertEquals(profile, repository.find(playerId).orElseThrow());
+    }
+
     private static PlayerId player(String seed) {
         return new PlayerId(UUID.nameUUIDFromBytes(seed.getBytes()));
     }

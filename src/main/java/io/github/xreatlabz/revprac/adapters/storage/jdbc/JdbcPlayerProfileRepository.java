@@ -51,7 +51,6 @@ public final class JdbcPlayerProfileRepository implements PlayerProfileRepositor
                             + "values (?, ?, ?, ?) "
                             + "on conflict(player_id) do update set "
                             + "last_known_name = excluded.last_known_name, "
-                            + "first_seen_at = excluded.first_seen_at, "
                             + "last_seen_at = excluded.last_seen_at")) {
                 statement.setString(1, profile.playerId().value().toString());
                 statement.setString(2, profile.lastKnownName().orElse(null));

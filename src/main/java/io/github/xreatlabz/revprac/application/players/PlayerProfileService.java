@@ -26,9 +26,13 @@ public final class PlayerProfileService {
                         playerId,
                         normalizedName,
                         existing.firstSeenAt(),
-                        seenAt))
+                        latest(existing.lastSeenAt(), seenAt)))
                 .orElseGet(() -> new PlayerProfile(playerId, normalizedName, seenAt, seenAt));
         playerProfileRepository.upsert(profile);
         return profile;
+    }
+
+    private static Instant latest(Instant current, Instant candidate) {
+        return candidate.isAfter(current) ? candidate : current;
     }
 }

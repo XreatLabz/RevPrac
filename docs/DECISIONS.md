@@ -106,3 +106,9 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: Keep storage bootstrap fail-closed and close the storage runtime after queue, match, and player teardown in `BootstrapRuntime.shutdown()`.
 - Decision: Defer match-history settlement, stats, seasons, PostgreSQL, and import/export to later Phase 6 slices.
 - Rationale: RevPrac needs a small durable spine for player identity and queue seeding before broad competitive history and alternative storage backends are added.
+
+## 2026-05-02: Phase 6A Persistence Failure-Path Hardening
+
+- Decision: Close the JDBC storage runtime if any bootstrap step after storage creation fails before `RevPracPlugin` receives a `BootstrapRuntime`.
+- Decision: Preserve the stored profile `first_seen_at` on JDBC conflict updates and keep profile `last_seen_at` monotonic when the system clock moves backward.
+- Rationale: Failed enable paths must not leak Hikari resources, and durable player identity timestamps should remain stable even when host time is corrected.

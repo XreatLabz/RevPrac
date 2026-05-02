@@ -60,13 +60,22 @@ import org.bukkit.plugin.java.JavaPlugin;
 public final class RevPracBootstrap {
 
     private final LoadValidatedConfigService loadValidatedConfigService;
+    private final PostStorageBootstrapHook postStorageBootstrapHook;
 
     public RevPracBootstrap() {
         this(new LoadValidatedConfigService());
     }
 
     RevPracBootstrap(LoadValidatedConfigService loadValidatedConfigService) {
+        this(loadValidatedConfigService, storageRuntime -> {
+        });
+    }
+
+    RevPracBootstrap(
+            LoadValidatedConfigService loadValidatedConfigService,
+            PostStorageBootstrapHook postStorageBootstrapHook) {
         this.loadValidatedConfigService = loadValidatedConfigService;
+        this.postStorageBootstrapHook = Objects.requireNonNull(postStorageBootstrapHook, "postStorageBootstrapHook");
     }
 
     public Result<BootstrapRuntime> enable(JavaPlugin plugin) {
@@ -124,100 +133,116 @@ public final class RevPracBootstrap {
             return new Err<>(problem);
         }
 
-        PaperPlayerStateAdapter playerStateAdapter = new PaperPlayerStateAdapter(plugin.getServer());
-        PlayerSessionService playerSessionService = new PlayerSessionService(
-                new InMemoryPlayerSessionRepository(),
-                new InMemoryPendingRestorationRepository(),
-                playerStateAdapter);
-        PlayerProfileService playerProfileService = new PlayerProfileService(storageRuntime.playerProfileRepository());
-        RatingService ratingService = new RatingService(storageRuntime.playerRatingRepository());
-        PaperKitLoadoutAdapter kitLoadoutAdapter = new PaperKitLoadoutAdapter();
-        MatchRepository matchRepository = new InMemoryMatchRepository();
-        DuelRequestRepository duelRequestRepository = new InMemoryDuelRequestRepository();
-        QueueTicketRepository queueTicketRepository = new InMemoryQueueTicketRepository();
-        PlayerAvailabilityService availabilityService =
-                new PlayerAvailabilityService(matchRepository, duelRequestRepository, queueTicketRepository);
-        QueueConfig queueConfig = config.queues();
-        MatchRuleset matchRuleset = new MatchRuleset(
-                config.matches().countdownTicks(),
-                config.matches().maxDurationTicks(),
-                config.matches().spectatorsEnabled());
-        PaperMatchPlayerAdapter matchPlayerAdapter = new PaperMatchPlayerAdapter(plugin.getServer(), kitLoadoutAdapter);
-        Consumer<MatchEvent> eventSink = event -> {
-        };
-        MatchLifecycleService matchLifecycleService = new MatchLifecycleService(
-                matchRepository,
-                playerSessionService,
-                arenaRegistryService,
-                kitRegistryService,
-                matchPlayerAdapter,
-                matchRuleset,
-                eventSink);
-        DuelRequestService duelRequestService = new DuelRequestService(
-                duelRequestRepository,
-                matchRepository,
-                arenaRegistryService,
-                kitRegistryService,
-                matchPlayerAdapter,
-                matchLifecycleService,
-                availabilityService,
-                Clock.systemUTC(),
-                Duration.ofSeconds(config.matches().duelRequestExpirySeconds()),
-                eventSink);
-        QueueService queueService = new QueueService(
-                queueTicketRepository,
-                ratingService,
-                availabilityService,
-                playerSessionService,
-                kitRegistryService,
-                playerStateAdapter,
-                Clock.systemUTC(),
-                queueConfig);
-        QueueMatchmakingService queueMatchmakingService = new QueueMatchmakingService(
-                queueTicketRepository,
-                matchLifecycleService,
-                new MatchmakingWindowPolicy(queueConfig.rankedWindows()),
-                queueConfig);
-        PaperPlayerSessionListener playerSessionListener =
-                new PaperPlayerSessionListener(plugin, playerSessionService, playerProfileService, Clock.systemUTC());
-        PaperMatchLifecycleListener matchLifecycleListener =
-                new PaperMatchLifecycleListener(matchLifecycleService, matchRepository, matchPlayerAdapter);
-        PaperQueueLifecycleListener queueLifecycleListener = new PaperQueueLifecycleListener(queueService);
-        PaperMatchTicker paperMatchTicker =
-                new PaperMatchTicker(plugin, matchLifecycleService, matchRepository, matchPlayerAdapter);
-        PaperQueueTicker paperQueueTicker =
-                new PaperQueueTicker(plugin, queueMatchmakingService, queueConfig.matchmakingPeriodTicks());
-        plugin.getServer().getPluginManager().registerEvents(playerSessionListener, plugin);
-        plugin.getServer().getPluginManager().registerEvents(matchLifecycleListener, plugin);
-        plugin.getServer().getPluginManager().registerEvents(queueLifecycleListener, plugin);
-        plugin.getServer().getOnlinePlayers().forEach(playerSessionListener::trackPlayerAfterJoin);
-        BootstrapRuntime runtime = new BootstrapRuntime(
-                config,
-                lifecycleReporter,
-                playerSessionService,
-                arenaRegistryService,
-                kitRegistryService,
-                arenaRegistryFiles,
-                kitRegistryFiles,
-                duelRequestService,
-                matchLifecycleService,
-                paperMatchTicker,
-                queueService,
-                queueMatchmakingService,
-                paperQueueTicker,
-                storageRuntime);
-        Objects.requireNonNull(plugin.getCommand("revprac"), "revprac command must be declared in plugin.yml")
-                .setExecutor(new RevPracAdminCommand(runtime, kitLoadoutAdapter));
-        Objects.requireNonNull(plugin.getCommand("duel"), "duel command must be declared in plugin.yml")
-                .setExecutor(new RevPracDuelCommand(plugin.getServer(), duelRequestService, matchLifecycleService));
-        Objects.requireNonNull(plugin.getCommand("queue"), "queue command must be declared in plugin.yml")
-                .setExecutor(new RevPracQueueCommand(queueService, paperQueueTicker::currentTick));
-        paperQueueTicker.start();
-        paperMatchTicker.start();
-        if (config.diagnostics().verboseLifecycleLogs()) {
-            lifecycleReporter.info("RevPrac runtime bootstrapped.");
+        try {
+            postStorageBootstrapHook.afterStorageCreated(storageRuntime);
+            PaperPlayerStateAdapter playerStateAdapter = new PaperPlayerStateAdapter(plugin.getServer());
+            PlayerSessionService playerSessionService = new PlayerSessionService(
+                    new InMemoryPlayerSessionRepository(),
+                    new InMemoryPendingRestorationRepository(),
+                    playerStateAdapter);
+            PlayerProfileService playerProfileService = new PlayerProfileService(storageRuntime.playerProfileRepository());
+            RatingService ratingService = new RatingService(storageRuntime.playerRatingRepository());
+            PaperKitLoadoutAdapter kitLoadoutAdapter = new PaperKitLoadoutAdapter();
+            MatchRepository matchRepository = new InMemoryMatchRepository();
+            DuelRequestRepository duelRequestRepository = new InMemoryDuelRequestRepository();
+            QueueTicketRepository queueTicketRepository = new InMemoryQueueTicketRepository();
+            PlayerAvailabilityService availabilityService =
+                    new PlayerAvailabilityService(matchRepository, duelRequestRepository, queueTicketRepository);
+            QueueConfig queueConfig = config.queues();
+            MatchRuleset matchRuleset = new MatchRuleset(
+                    config.matches().countdownTicks(),
+                    config.matches().maxDurationTicks(),
+                    config.matches().spectatorsEnabled());
+            PaperMatchPlayerAdapter matchPlayerAdapter = new PaperMatchPlayerAdapter(plugin.getServer(), kitLoadoutAdapter);
+            Consumer<MatchEvent> eventSink = event -> {
+            };
+            MatchLifecycleService matchLifecycleService = new MatchLifecycleService(
+                    matchRepository,
+                    playerSessionService,
+                    arenaRegistryService,
+                    kitRegistryService,
+                    matchPlayerAdapter,
+                    matchRuleset,
+                    eventSink);
+            DuelRequestService duelRequestService = new DuelRequestService(
+                    duelRequestRepository,
+                    matchRepository,
+                    arenaRegistryService,
+                    kitRegistryService,
+                    matchPlayerAdapter,
+                    matchLifecycleService,
+                    availabilityService,
+                    Clock.systemUTC(),
+                    Duration.ofSeconds(config.matches().duelRequestExpirySeconds()),
+                    eventSink);
+            QueueService queueService = new QueueService(
+                    queueTicketRepository,
+                    ratingService,
+                    availabilityService,
+                    playerSessionService,
+                    kitRegistryService,
+                    playerStateAdapter,
+                    Clock.systemUTC(),
+                    queueConfig);
+            QueueMatchmakingService queueMatchmakingService = new QueueMatchmakingService(
+                    queueTicketRepository,
+                    matchLifecycleService,
+                    new MatchmakingWindowPolicy(queueConfig.rankedWindows()),
+                    queueConfig);
+            PaperPlayerSessionListener playerSessionListener =
+                    new PaperPlayerSessionListener(plugin, playerSessionService, playerProfileService, Clock.systemUTC());
+            PaperMatchLifecycleListener matchLifecycleListener =
+                    new PaperMatchLifecycleListener(matchLifecycleService, matchRepository, matchPlayerAdapter);
+            PaperQueueLifecycleListener queueLifecycleListener = new PaperQueueLifecycleListener(queueService);
+            PaperMatchTicker paperMatchTicker =
+                    new PaperMatchTicker(plugin, matchLifecycleService, matchRepository, matchPlayerAdapter);
+            PaperQueueTicker paperQueueTicker =
+                    new PaperQueueTicker(plugin, queueMatchmakingService, queueConfig.matchmakingPeriodTicks());
+            plugin.getServer().getPluginManager().registerEvents(playerSessionListener, plugin);
+            plugin.getServer().getPluginManager().registerEvents(matchLifecycleListener, plugin);
+            plugin.getServer().getPluginManager().registerEvents(queueLifecycleListener, plugin);
+            plugin.getServer().getOnlinePlayers().forEach(playerSessionListener::trackPlayerAfterJoin);
+            BootstrapRuntime runtime = new BootstrapRuntime(
+                    config,
+                    lifecycleReporter,
+                    playerSessionService,
+                    arenaRegistryService,
+                    kitRegistryService,
+                    arenaRegistryFiles,
+                    kitRegistryFiles,
+                    duelRequestService,
+                    matchLifecycleService,
+                    paperMatchTicker,
+                    queueService,
+                    queueMatchmakingService,
+                    paperQueueTicker,
+                    storageRuntime);
+            Objects.requireNonNull(plugin.getCommand("revprac"), "revprac command must be declared in plugin.yml")
+                    .setExecutor(new RevPracAdminCommand(runtime, kitLoadoutAdapter));
+            Objects.requireNonNull(plugin.getCommand("duel"), "duel command must be declared in plugin.yml")
+                    .setExecutor(new RevPracDuelCommand(plugin.getServer(), duelRequestService, matchLifecycleService));
+            Objects.requireNonNull(plugin.getCommand("queue"), "queue command must be declared in plugin.yml")
+                    .setExecutor(new RevPracQueueCommand(queueService, paperQueueTicker::currentTick));
+            paperQueueTicker.start();
+            paperMatchTicker.start();
+            if (config.diagnostics().verboseLifecycleLogs()) {
+                lifecycleReporter.info("RevPrac runtime bootstrapped.");
+            }
+            return new Ok<>(runtime);
+        } catch (RuntimeException exception) {
+            closeStorageAfterFailedBootstrap(storageRuntime, exception);
+            throw exception;
         }
-        return new Ok<>(runtime);
+    }
+
+    private static void closeStorageAfterFailedBootstrap(
+            JdbcStorageRuntime storageRuntime,
+            RuntimeException originalFailure) {
+        try {
+            storageRuntime.close();
+        } catch (RuntimeException closeFailure) {
+            originalFailure.addSuppressed(closeFailure);
+        }
     }
 
     private void handleStartupFailure(
@@ -232,5 +257,10 @@ public final class RevPracBootstrap {
         }
 
         plugin.getServer().getPluginManager().disablePlugin(plugin);
+    }
+
+    @FunctionalInterface
+    interface PostStorageBootstrapHook {
+        void afterStorageCreated(JdbcStorageRuntime storageRuntime);
     }
 }

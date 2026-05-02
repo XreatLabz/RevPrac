@@ -108,6 +108,28 @@ final class JdbcStorageFactoryTest {
     }
 
     @Test
+    void duplicateProfileUpsertsPreserveTheOriginalFirstSeenInstant() throws Exception {
+        Path dataFolder = tempDir.resolve("plugin-data");
+        PlayerId playerId = player("stable-first-seen");
+        Instant originalFirstSeenAt = Instant.ofEpochMilli(1_000L);
+        PlayerProfile firstProfile = new PlayerProfile(
+                playerId, Optional.of("FirstName"), originalFirstSeenAt, Instant.ofEpochMilli(2_000L));
+        PlayerProfile conflictingProfile = new PlayerProfile(
+                playerId, Optional.of("UpdatedName"), Instant.ofEpochMilli(500L), Instant.ofEpochMilli(4_000L));
+
+        try (StorageHandle storage = openStorage(dataFolder, "storage/revprac.db")) {
+            storage.playerProfiles().upsert(firstProfile);
+            storage.playerProfiles().upsert(conflictingProfile);
+
+            PlayerProfile storedProfile = storage.playerProfiles().find(playerId).orElseThrow();
+            assertEquals(Optional.of("UpdatedName"), storedProfile.lastKnownName());
+            assertEquals(originalFirstSeenAt, storedProfile.firstSeenAt());
+            assertEquals(conflictingProfile.lastSeenAt(), storedProfile.lastSeenAt());
+            assertEquals(1L, countRows(storage.databasePath(), "player_profiles"));
+        }
+    }
+
+    @Test
     void closedRuntimeCausesRepositoryOperationsToSurfaceIllegalState() throws Exception {
         Path dataFolder = tempDir.resolve("plugin-data");
         PlayerId playerId = player("closed-runtime");
