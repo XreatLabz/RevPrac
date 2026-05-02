@@ -38,7 +38,7 @@ RevPrac currently has:
 
 Current repo shape is intentionally small:
 
-- arena and kit registry groundwork exists; the direct duel and match engine is implemented; queue, ranked progression, rating, stats, and durable persistence feature modules are still planned
+- arena and kit registry groundwork exists; the direct duel, queue matchmaking, and match engine are implemented; ranked progression, durable ratings, stats, and durable persistence feature modules are still planned
 - no Gradle subprojects yet
 - no public plugin API surface yet
 
@@ -244,7 +244,7 @@ Implemented scope:
 
 Phase boundary:
 
-- queueing, matchmaking, ranked progression, ratings, stats, parties, rematch, post-match summaries, and durable persistence stay future
+- Phase 4 does not include queueing or matchmaking; those are covered in Phase 5. Ranked progression, ratings, stats, parties, rematch, post-match summaries, and durable persistence remain Phase 6+.
 - match/request state stays in memory for now; durable storage comes later
 - arena reset remains a port boundary; block rollback or arena restoration is deferred to the phase that owns teardown recovery
 - domain event emission is in scope; richer event logging or metrics are not
@@ -270,27 +270,48 @@ rg -n "domain\\.matches|application\\.matches|ports\\.matches|adapters\\.paper\\
 
 ### Phase 5: Queues and Matchmaking
 
-Status: Planned
+Status: Implemented
 
 Goal:
 
 - add unranked and ranked queues
 - issue and manage queue tickets
 - prevent double-queue states
-- apply MMR windows and selection policy
-- keep concurrency behavior safe
+- apply deterministic matchmaking windows and selection policy
+- keep queue intake, matchmaking, and shutdown drainage safe while active queue state remains in memory
+
+Implemented scope:
+
+- `domain.queues` owns queue modes, keys, tickets, states, and matchmaking-window compatibility
+- `application.queues.QueueService` owns join/leave/status, queue availability gating, queue session transitions, ranked base-rating seeding, and shutdown drainage
+- `application.queues.QueueMatchmakingService` owns deterministic sweeps, unranked FIFO matching, ranked rating-window matching, claim/rollback handling, and queued match handoff
+- `ports.queues` plus in-memory ticket/rating repositories keep active queue tickets and per-player+kit search ratings in memory
+- `adapters.paper.queues` owns the synchronous ticker and quit listener, and `adapters.paper.commands.RevPracQueueCommand` owns `/queue` parsing through standard `plugin.yml`
+- `application.config.QueueConfig` owns `queues.matchmaking-period-ticks`, `queues.ranked-base-rating`, `queues.ticks-per-second`, and `queues.ranked-windows`
+- queued matches are started via `MatchLifecycleService.startQueuedMatch`, which reserves an arena after a pair is claimed instead of reserving one on queue join
+- direct duel and queued match flows share availability, so active duel or match players cannot queue and queued players cannot send or accept direct duels
+- queue shutdown drains active tickets and restores online queued players through session safety
+
+Phase boundary:
+
+- queue tickets and queue ratings are runtime-only state; durable ratings, progression, stats, seasons, parties, rematch, public events, metrics, and persistence remain Phase 6+
+- ranked and unranked queues are explicit modes; ranked eligibility is gated by `KitRules.ranked`, but ranked-capable kits can still join unranked queues
+- matchmaking is deterministic: unranked uses FIFO within mode+kit, ranked uses wait-time rating windows with deterministic tie-breakers
+- the Paper queue ticker is synchronous, so `/queue join` records the actual server tick and matchmaking sweeps pass the current server tick into the policy
 
 Exit criteria:
 
-- a player cannot be placed into conflicting queue states
-- matchmaking decisions are predictable and testable
-- ranked and unranked flows stay separate in the domain model
-- concurrency-sensitive code has regression coverage
+- a player cannot hold conflicting queue and combat states
+- ranked and unranked matchmaking paths are separate and predictable
+- queue intake, quit handling, and shutdown drainage leave no stranded active tickets
+- queue behavior is covered by focused domain, application, adapter, and plugin tests
 
 Validation:
 
 ```bash
-./gradlew test
+./gradlew test --tests '*QueueTicketContractTest' --tests '*MatchmakingWindowPolicyContractTest'
+./gradlew test --tests '*QueueServiceTest' --tests '*QueueMatchmakingServiceTest' --tests '*InMemoryQueueTicketRepositoryTest' --tests '*InMemoryQueueRatingRepositoryTest'
+./gradlew test --tests '*PaperQueueLifecycleListenerTest' --tests '*PaperQueueTickerTest' --tests '*RevPracQueueCommandTest' --tests '*RevPracPluginPhase5Test'
 ./gradlew spotlessCheck test jacocoTestReport jar
 ./scripts/smoke-run-paper.sh
 ```

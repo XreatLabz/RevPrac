@@ -2,6 +2,7 @@ package io.github.xreatlabz.revprac.application.matches;
 
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
+import io.github.xreatlabz.revprac.application.queues.PlayerAvailabilityService;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaDefinition;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaId;
 import io.github.xreatlabz.revprac.domain.kits.KitDefinition;
@@ -11,6 +12,7 @@ import io.github.xreatlabz.revprac.domain.matches.DuelRequestId;
 import io.github.xreatlabz.revprac.domain.matches.DuelRequestState;
 import io.github.xreatlabz.revprac.domain.matches.Match;
 import io.github.xreatlabz.revprac.domain.matches.MatchEvent;
+import io.github.xreatlabz.revprac.domain.matches.MatchState;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
 import io.github.xreatlabz.revprac.ports.matches.DuelRequestRepository;
 import io.github.xreatlabz.revprac.ports.matches.MatchPlayerPort;
@@ -34,6 +36,7 @@ public final class DuelRequestService {
     private final KitRegistryService kitRegistryService;
     private final MatchPlayerPort matchPlayerPort;
     private final MatchLifecycleService matchLifecycleService;
+    private final PlayerAvailabilityService availabilityService;
     private final Clock clock;
     private final Duration requestTtl;
     private final MatchEventPublisher eventPublisher;
@@ -47,6 +50,7 @@ public final class DuelRequestService {
             KitRegistryService kitRegistryService,
             MatchPlayerPort matchPlayerPort,
             MatchLifecycleService matchLifecycleService,
+            PlayerAvailabilityService availabilityService,
             Clock clock,
             Duration requestTtl,
             Consumer<MatchEvent> eventSink) {
@@ -56,6 +60,7 @@ public final class DuelRequestService {
         this.kitRegistryService = Objects.requireNonNull(kitRegistryService, "kitRegistryService");
         this.matchPlayerPort = Objects.requireNonNull(matchPlayerPort, "matchPlayerPort");
         this.matchLifecycleService = Objects.requireNonNull(matchLifecycleService, "matchLifecycleService");
+        this.availabilityService = Objects.requireNonNull(availabilityService, "availabilityService");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.requestTtl = Objects.requireNonNull(requestTtl, "requestTtl");
         this.eventPublisher = new MatchEventPublisher(Objects.requireNonNull(eventSink, "eventSink"));
@@ -78,9 +83,9 @@ public final class DuelRequestService {
 
             requireOnline(requesterId, "requester");
             requireOnline(targetId, "target");
-            requireNotBusy(requesterId, "requester");
-            requireNotBusy(targetId, "target");
             requireNoPendingRequestBetween(requesterId, targetId);
+            availabilityService.requireAvailableForDuel(requesterId, "requester");
+            availabilityService.requireAvailableForDuel(targetId, "target");
             requireArena(arenaId);
             requireKit(kitId);
 
@@ -114,6 +119,7 @@ public final class DuelRequestService {
             ensureIntakeOpen();
             DuelRequest pendingRequest = requirePendingRequest(requesterId, targetId);
             DuelRequest acceptedRequest = pendingRequest.accept();
+            requireAvailableForAcceptedDuel(acceptedRequest);
             Match match = matchLifecycleService.startAcceptedDuel(acceptedRequest, startedMatch -> {
                 duelRequestRepository.save(acceptedRequest);
                 emit(sequence -> new MatchEvent.DuelRequestAccepted(
@@ -185,18 +191,42 @@ public final class DuelRequestService {
         }
     }
 
-    private void requireNotBusy(PlayerId playerId, String role) {
-        if (matchRepository.findByPlayer(playerId).isPresent() || matchRepository.findBySpectator(playerId).isPresent()) {
-            throw new IllegalStateException(role + " is already busy");
-        }
-    }
-
     private void requireNoPendingRequestBetween(PlayerId requesterId, PlayerId targetId) {
         boolean duplicatePending = duelRequestRepository.findPendingByPlayers(requesterId, targetId).isPresent()
                 || duelRequestRepository.findPendingByPlayers(targetId, requesterId).isPresent();
         if (duplicatePending) {
             throw new IllegalStateException("a pending duel request already exists for these players");
         }
+    }
+
+    private void requireAvailableForAcceptedDuel(DuelRequest acceptedRequest) {
+        requireAvailableForAcceptedDuel(acceptedRequest.requesterId(), "requester", acceptedRequest.id());
+        requireAvailableForAcceptedDuel(acceptedRequest.targetId(), "target", acceptedRequest.id());
+    }
+
+    private void requireAvailableForAcceptedDuel(PlayerId playerId, String role, DuelRequestId acceptedRequestId) {
+        if (hasActiveMatch(playerId)
+                || hasOtherPendingDuelRequest(playerId, acceptedRequestId)
+                || availabilityService.isQueued(playerId)) {
+            throw new IllegalStateException(role + " is already busy");
+        }
+    }
+
+    private boolean hasActiveMatch(PlayerId playerId) {
+        return matchRepository.findByPlayer(playerId).filter(DuelRequestService::isActiveMatch).isPresent()
+                || matchRepository.findBySpectator(playerId).filter(DuelRequestService::isActiveMatch).isPresent();
+    }
+
+    private boolean hasOtherPendingDuelRequest(PlayerId playerId, DuelRequestId acceptedRequestId) {
+        return duelRequestRepository.findAll().stream()
+                .filter(duelRequest -> !duelRequest.id().equals(acceptedRequestId))
+                .filter(duelRequest -> duelRequest.state() == DuelRequestState.PENDING)
+                .anyMatch(duelRequest -> duelRequest.requesterId().equals(playerId)
+                        || duelRequest.targetId().equals(playerId));
+    }
+
+    private static boolean isActiveMatch(Match match) {
+        return match.state() != MatchState.COMPLETED;
     }
 
     private ArenaDefinition requireArena(ArenaId arenaId) {

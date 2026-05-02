@@ -8,3 +8,18 @@ matches:
   countdown-ticks: 100
   max-duration-ticks: 12000
   spectators-enabled: true
+queues:
+  matchmaking-period-ticks: 20
+  ranked-base-rating: 1000
+  ticks-per-second: 20
+  ranked-windows:
+    - wait-seconds: 0
+      rating-window: 50
+    - wait-seconds: 10
+      rating-window: 100
+    - wait-seconds: 20
+      rating-window: 150
+    - wait-seconds: 30
+      rating-window: 250
+    - wait-seconds: 45
+      rating-window: 400

@@ -82,3 +82,19 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: Shutdown order closes duel intake, cancels the ticker, tears down matches, and then shuts down player sessions.
 - Decision: Keep richer event logging, metrics, block rollback, parties, rematch, post-match summaries, ranked progression, ratings, and stats outside the Phase 4 scope.
 - Rationale: Phase 4 should deliver a safe, testable duel engine with clear lifecycle boundaries before queueing, persistence, and broader competitive progression are introduced.
+
+## 2026-05-01: Phase 5 Queues and Matchmaking Boundary
+
+- Decision: Model queueing as explicit `UNRANKED` and `RANKED` modes with in-memory active tickets and in-memory per-player plus kit search ratings.
+- Decision: Gate ranked queue entry by `KitRules.ranked`, but allow ranked-capable kits to join unranked queues.
+- Decision: Register `/queue` through standard `plugin.yml` with `/queue join ranked <kit>`, `/queue join unranked <kit>`, `/queue leave`, and `/queue status`.
+- Decision: Keep queue matchmaking deterministic with FIFO unranked pairing, ranked wait-time plus rating-window selection, and synchronous Paper ticker sweeps using the current server tick.
+- Decision: Share availability between direct duel and queue flows, and start queued matches only after a ticket pair is claimed and handed to `MatchLifecycleService.startQueuedMatch()`.
+- Decision: Defer durable ratings, progression, stats, seasons, parties, rematch, public events, metrics, and persistence to Phase 6.
+- Rationale: Phase 5 should deliver safe matchmaking now while keeping long-term competitive progression and storage concerns isolated for the persistence phase.
+
+## 2026-05-01: Phase 5 Queue Review Corrections
+
+- Decision: `QueueService` uses `PlayerStatePort` for generic online checks during queue join and shutdown drain instead of depending on the match-specific `MatchPlayerPort`.
+- Decision: `BootstrapRuntime.shutdown()` closes `QueueMatchmakingService` intake before cancelling the queue ticker and draining queue tickets.
+- Rationale: Queue presence checks belong on the shared player-state boundary, and shutdown must stop new matchmaking sweeps before queue-drain teardown begins.

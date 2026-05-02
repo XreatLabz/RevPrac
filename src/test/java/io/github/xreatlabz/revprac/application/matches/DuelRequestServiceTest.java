@@ -11,8 +11,10 @@ import io.github.xreatlabz.revprac.adapters.storage.InMemoryKitRegistryRepositor
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryMatchRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionRepository;
+import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueTicketRepository;
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
+import io.github.xreatlabz.revprac.application.queues.PlayerAvailabilityService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaCuboid;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaDefinition;
@@ -33,10 +35,16 @@ import io.github.xreatlabz.revprac.domain.players.LocationSnapshot;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
 import io.github.xreatlabz.revprac.domain.players.PlayerSafetySnapshot;
 import io.github.xreatlabz.revprac.domain.players.PlayerStatusSnapshot;
+import io.github.xreatlabz.revprac.domain.queues.QueueKey;
+import io.github.xreatlabz.revprac.domain.queues.QueueMode;
+import io.github.xreatlabz.revprac.domain.queues.QueueTicket;
+import io.github.xreatlabz.revprac.domain.queues.QueueTicketId;
+import io.github.xreatlabz.revprac.domain.queues.QueueTicketState;
 import io.github.xreatlabz.revprac.ports.arenas.ArenaResetPort;
 import io.github.xreatlabz.revprac.ports.matches.MatchPlayerPort;
 import io.github.xreatlabz.revprac.ports.players.PlayerStatePort;
 import java.io.IOException;
+import java.lang.reflect.Constructor;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -121,6 +129,85 @@ final class DuelRequestServiceTest {
                 () -> harness.duelRequestService.request(
                         harness.requester(), harness.target(), harness.arenaId(), harness.kitId()));
         assertEquals("a pending duel request already exists for these players", duplicate.getMessage());
+    }
+
+    @Test
+    void requestRejectsQueuedRequesterOrTarget() {
+        Harness requesterHarness = new Harness(new AdjustableClock(Instant.parse("2026-05-01T12:00:00Z")));
+        requesterHarness.join(requesterHarness.requester());
+        requesterHarness.join(requesterHarness.target());
+        assertTrue(requesterHarness.queueTicketRepository.create(requesterHarness.queueTicket(
+                "queued-requester", requesterHarness.requester(), QueueTicketState.SEARCHING)));
+
+        IllegalStateException requesterQueued = assertThrows(
+                IllegalStateException.class,
+                () -> requesterHarness.duelRequestService.request(
+                        requesterHarness.requester(),
+                        requesterHarness.target(),
+                        requesterHarness.arenaId(),
+                        requesterHarness.kitId()));
+        assertEquals("requester is already busy", requesterQueued.getMessage());
+
+        Harness targetHarness = new Harness(new AdjustableClock(Instant.parse("2026-05-01T12:00:00Z")));
+        targetHarness.join(targetHarness.requester());
+        targetHarness.join(targetHarness.target());
+        assertTrue(targetHarness.queueTicketRepository.create(targetHarness.queueTicket(
+                "queued-target", targetHarness.target(), QueueTicketState.PAIRING)));
+
+        IllegalStateException targetQueued = assertThrows(
+                IllegalStateException.class,
+                () -> targetHarness.duelRequestService.request(
+                        targetHarness.requester(),
+                        targetHarness.target(),
+                        targetHarness.arenaId(),
+                        targetHarness.kitId()));
+        assertEquals("target is already busy", targetQueued.getMessage());
+    }
+
+    @Test
+    void acceptRejectsRequesterOrTargetQueuedAfterRequestCreation() {
+        Harness requesterHarness = new Harness(new AdjustableClock(Instant.parse("2026-05-01T12:00:00Z")));
+        requesterHarness.join(requesterHarness.requester());
+        requesterHarness.join(requesterHarness.target());
+        DuelRequest requesterRequest = requesterHarness.duelRequestService.request(
+                requesterHarness.requester(),
+                requesterHarness.target(),
+                requesterHarness.arenaId(),
+                requesterHarness.kitId());
+        assertTrue(requesterHarness.queueTicketRepository.create(requesterHarness.queueTicket(
+                "queued-requester-before-accept", requesterHarness.requester(), QueueTicketState.SEARCHING)));
+
+        IllegalStateException requesterQueued = assertThrows(
+                IllegalStateException.class,
+                () -> requesterHarness.duelRequestService.accept(
+                        requesterHarness.requester(), requesterHarness.target()));
+
+        assertEquals("requester is already busy", requesterQueued.getMessage());
+        assertEquals(
+                DuelRequestState.PENDING,
+                requesterHarness.requestRepository.find(requesterRequest.id()).orElseThrow().state());
+        assertTrue(requesterHarness.matchRepository.findAll().isEmpty());
+
+        Harness targetHarness = new Harness(new AdjustableClock(Instant.parse("2026-05-01T12:00:00Z")));
+        targetHarness.join(targetHarness.requester());
+        targetHarness.join(targetHarness.target());
+        DuelRequest targetRequest = targetHarness.duelRequestService.request(
+                targetHarness.requester(),
+                targetHarness.target(),
+                targetHarness.arenaId(),
+                targetHarness.kitId());
+        assertTrue(targetHarness.queueTicketRepository.create(targetHarness.queueTicket(
+                "queued-target-before-accept", targetHarness.target(), QueueTicketState.PAIRING)));
+
+        IllegalStateException targetQueued = assertThrows(
+                IllegalStateException.class,
+                () -> targetHarness.duelRequestService.accept(targetHarness.requester(), targetHarness.target()));
+
+        assertEquals("target is already busy", targetQueued.getMessage());
+        assertEquals(
+                DuelRequestState.PENDING,
+                targetHarness.requestRepository.find(targetRequest.id()).orElseThrow().state());
+        assertTrue(targetHarness.matchRepository.findAll().isEmpty());
     }
 
     @Test
@@ -297,6 +384,16 @@ final class DuelRequestServiceTest {
         assertNoForbiddenTimeCalls(APPLICATION_MATCHES_DIR);
     }
 
+    @Test
+    void constructionRequiresInjectedQueueAwareAvailabilityService() {
+        Constructor<?>[] constructors = DuelRequestService.class.getConstructors();
+
+        assertEquals(1, constructors.length, "DuelRequestService should expose one queue-aware constructor");
+        assertTrue(
+                List.of(constructors[0].getParameterTypes()).contains(PlayerAvailabilityService.class),
+                "DuelRequestService construction must require PlayerAvailabilityService");
+    }
+
     private static void assertNoForbiddenImports(Path directory) throws IOException {
         try (Stream<Path> sources = Files.walk(directory)) {
             for (Path source : sources.filter(path -> path.toString().endsWith(".java")).toList()) {
@@ -325,6 +422,7 @@ final class DuelRequestServiceTest {
         private final AdjustableClock clock;
         private final InMemoryDuelRequestRepository requestRepository = new InMemoryDuelRequestRepository();
         private final InMemoryMatchRepository matchRepository = new InMemoryMatchRepository();
+        private final InMemoryQueueTicketRepository queueTicketRepository = new InMemoryQueueTicketRepository();
         private final FakeArenaResetPort arenaResetPort = new FakeArenaResetPort();
         private final ArenaRegistryService arenaRegistryService =
                 new ArenaRegistryService(new InMemoryArenaRegistryRepository(), arenaResetPort);
@@ -373,6 +471,7 @@ final class DuelRequestServiceTest {
                     kitRegistryService,
                     matchPlayerPort,
                     matchLifecycleService,
+                    new PlayerAvailabilityService(matchRepository, requestRepository, queueTicketRepository),
                     this.clock,
                     Duration.ofSeconds(30),
                     eventSink);
@@ -400,6 +499,16 @@ final class DuelRequestServiceTest {
 
         private KitId kitId() {
             return new KitId("kit-one");
+        }
+
+        private QueueTicket queueTicket(String seed, PlayerId playerId, QueueTicketState state) {
+            return new QueueTicket(
+                    new QueueTicketId(UUID.nameUUIDFromBytes(seed.getBytes())),
+                    playerId,
+                    new QueueKey(QueueMode.RANKED, kitId()),
+                    10L,
+                    1000,
+                    state);
         }
 
         private void join(PlayerId playerId) {
