@@ -5,12 +5,18 @@ mockbukkit = "4.108.0"
 jacoco = "0.8.14"
 run-paper = "3.0.2"
 spotless = "8.4.0"
+hikaricp = "7.0.2"
+flyway = "12.5.0"
+sqlite-jdbc = "3.53.0.0"
 
 [libraries]
+flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
+hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit" }
 mockbukkit = { module = "org.mockbukkit.mockbukkit:mockbukkit-v1.21", version.ref = "mockbukkit" }
 paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
 
 [plugins]
 run-paper = { id = "xyz.jpenilla.run-paper", version.ref = "run-paper" }

@@ -3,6 +3,7 @@ package io.github.xreatlabz.revprac.application.queues;
 import io.github.xreatlabz.revprac.application.config.QueueConfig;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
+import io.github.xreatlabz.revprac.application.ratings.RatingService;
 import io.github.xreatlabz.revprac.domain.kits.KitDefinition;
 import io.github.xreatlabz.revprac.domain.kits.KitId;
 import io.github.xreatlabz.revprac.domain.players.PlayerContext;
@@ -26,7 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class QueueService {
 
     private final QueueTicketRepository queueTicketRepository;
-    private final QueueRatingRepository queueRatingRepository;
+    private final RatingService ratingService;
     private final PlayerAvailabilityService playerAvailabilityService;
     private final PlayerSessionService playerSessionService;
     private final KitRegistryService kitRegistryService;
@@ -45,8 +46,28 @@ public final class QueueService {
             PlayerStatePort playerStatePort,
             Clock clock,
             QueueConfig queueConfig) {
+        this(
+                queueTicketRepository,
+                RatingService.fromQueueRatingRepository(queueRatingRepository),
+                playerAvailabilityService,
+                playerSessionService,
+                kitRegistryService,
+                playerStatePort,
+                clock,
+                queueConfig);
+    }
+
+    public QueueService(
+            QueueTicketRepository queueTicketRepository,
+            RatingService ratingService,
+            PlayerAvailabilityService playerAvailabilityService,
+            PlayerSessionService playerSessionService,
+            KitRegistryService kitRegistryService,
+            PlayerStatePort playerStatePort,
+            Clock clock,
+            QueueConfig queueConfig) {
         this.queueTicketRepository = Objects.requireNonNull(queueTicketRepository, "queueTicketRepository");
-        this.queueRatingRepository = Objects.requireNonNull(queueRatingRepository, "queueRatingRepository");
+        this.ratingService = Objects.requireNonNull(ratingService, "ratingService");
         this.playerAvailabilityService = Objects.requireNonNull(playerAvailabilityService, "playerAvailabilityService");
         this.playerSessionService = Objects.requireNonNull(playerSessionService, "playerSessionService");
         this.kitRegistryService = Objects.requireNonNull(kitRegistryService, "kitRegistryService");
@@ -74,21 +95,28 @@ public final class QueueService {
         }
 
         playerSessionService.transitionTo(playerId, PlayerContext.QUEUE, TransitionReason.QUEUE_JOIN);
+        QueueTicket createdTicket = null;
         try {
+            RatingService.QueueJoinRating rankedQueueRating = mode == QueueMode.RANKED
+                    ? ratingService.queueJoinRating(playerId, kitId, queueConfig.rankedBaseRating())
+                    : null;
             QueueTicket ticket = new QueueTicket(
                     new QueueTicketId(UUID.randomUUID()),
                     playerId,
                     new QueueKey(mode, kitId),
                     currentTick,
-                    mode == QueueMode.RANKED
-                            ? queueRatingRepository.rating(playerId, kitId, queueConfig.rankedBaseRating())
-                            : 0,
+                    rankedQueueRating != null ? rankedQueueRating.rating() : 0,
                     QueueTicketState.SEARCHING);
             if (!queueTicketRepository.create(ticket)) {
                 throw new IllegalStateException("player already has an active queue ticket");
             }
+            createdTicket = ticket;
+            if (rankedQueueRating != null && rankedQueueRating.durableSeedRequired()) {
+                ratingService.saveSeed(playerId, kitId, rankedQueueRating.rating(), clock.instant());
+            }
             return ticket;
         } catch (RuntimeException exception) {
+            rollbackCreatedTicket(createdTicket, exception);
             rollbackToLobby(playerId, exception);
             throw exception;
         }
@@ -151,6 +179,17 @@ public final class QueueService {
     private void rollbackToLobby(PlayerId playerId, RuntimeException originalFailure) {
         try {
             playerSessionService.returnToLobby(playerId);
+        } catch (RuntimeException rollbackFailure) {
+            originalFailure.addSuppressed(rollbackFailure);
+        }
+    }
+
+    private void rollbackCreatedTicket(QueueTicket createdTicket, RuntimeException originalFailure) {
+        if (createdTicket == null) {
+            return;
+        }
+        try {
+            queueTicketRepository.delete(createdTicket.id());
         } catch (RuntimeException rollbackFailure) {
             originalFailure.addSuppressed(rollbackFailure);
         }

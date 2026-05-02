@@ -120,7 +120,24 @@ Boundary checks:
 rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java/io/github/xreatlabz/revprac/application/queues src/main/java/io/github/xreatlabz/revprac/domain/queues src/main/java/io/github/xreatlabz/revprac/ports/queues src/main/java/io/github/xreatlabz/revprac/adapters/storage
 ```
 
-The import check should return no matches for queue domain, application, ports, or storage code. `application.config.QueueConfig` owns `queues.matchmaking-period-ticks`, `queues.ranked-base-rating`, `queues.ticks-per-second`, and `queues.ranked-windows`; queue matching lives in `application.queues.QueueService` and `application.queues.QueueMatchmakingService`; queue tickets and queue ratings stay in memory; Paper command parsing, listener wiring, ticker scheduling, and plugin tests belong under `adapters.paper.commands`, `adapters.paper.queues`, and the plugin boundary.
+The import check should return no matches for queue domain, application, ports, or storage code. `application.config.QueueConfig` owns `queues.matchmaking-period-ticks`, `queues.ranked-base-rating`, `queues.ticks-per-second`, and `queues.ranked-windows`; queue matching lives in `application.queues.QueueService` and `application.queues.QueueMatchmakingService`; queue tickets stay in memory while ranked search ratings are seeded from durable player ratings; Paper command parsing, listener wiring, ticker scheduling, and plugin tests belong under `adapters.paper.commands`, `adapters.paper.queues`, and the plugin boundary.
+
+## Phase 6A Persistence Ratings
+
+For the durable player profile and rating slice, run the focused storage, config, and plugin lifecycle tests before the full gate:
+
+```bash
+./gradlew test --tests '*LoadValidatedConfigServiceContractTest' --tests '*JdbcStorageFactoryTest' --tests '*RevPracPluginPhase6Test'
+```
+
+Boundary checks:
+
+```bash
+rg -n "storage\\.|JdbcStorageFactory|JdbcStorageRuntime|Flyway|HikariCP|sqlite-jdbc|PlayerProfileRepository|PlayerRatingRepository" src/main/java src/main/resources
+rg -n "import (java\\.sql|javax\\.sql|org\\.flywaydb|org\\.sqlite|org\\.postgresql|com\\.zaxxer\\.hikari)" src/main/java/io/github/xreatlabz/revprac/application src/main/java/io/github/xreatlabz/revprac/domain src/main/java/io/github/xreatlabz/revprac/ports
+```
+
+The import check should return no matches in application, domain, or ports. JDBC, HikariCP, and Flyway belong under `adapters.storage.jdbc`. `src/main/resources/plugin.yml` declares the runtime libraries, and `JdbcStorageFactory` should fail closed on invalid paths or migration errors before repositories are exposed.
 
 ## Dependency Updates
 

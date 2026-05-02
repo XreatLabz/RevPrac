@@ -4,6 +4,7 @@ import static io.github.xreatlabz.revprac.ContractTestSupport.instantiateRecord;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.xreatlabz.revprac.application.result.Err;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.Test;
 final class LoadValidatedConfigServiceContractTest {
 
     private static final String QUEUE_CONFIG_TYPE = "io.github.xreatlabz.revprac.application.config.QueueConfig";
+    private static final String STORAGE_CONFIG_TYPE = "io.github.xreatlabz.revprac.application.config.StorageConfig";
     private static final String WINDOW_STEP_TYPE =
             "io.github.xreatlabz.revprac.domain.queues.MatchmakingWindowPolicy$WindowStep";
 
@@ -45,7 +47,10 @@ final class LoadValidatedConfigServiceContractTest {
                         "queues.ranked-windows",
                         List.of(
                                 Map.of("wait-seconds", 0, "rating-window", 60),
-                                Map.of("wait-seconds", 15, "rating-window", 120))))));
+                                Map.of("wait-seconds", 15, "rating-window", 120))),
+                Map.entry("storage.backend", "sqlite"),
+                Map.entry("storage.sqlite-path", "custom/revprac.db"),
+                Map.entry("storage.pool-maximum-size", 8))));
 
         RevPracConfig config = assertOk(result);
 
@@ -69,10 +74,15 @@ final class LoadValidatedConfigServiceContractTest {
         assertEquals(2, rankedWindows.size());
         assertEquals(15L, readAccessor(rankedWindows.get(1), "waitSeconds"));
         assertEquals(120, readAccessor(rankedWindows.get(1), "ratingWindow"));
+        Object storageConfig = readAccessor(config, "storage");
+        assertTrue(storageConfig.getClass().isRecord(), "StorageConfig should be an immutable record");
+        assertEquals("sqlite", readAccessor(storageConfig, "backend"));
+        assertEquals("custom/revprac.db", readAccessor(storageConfig, "sqlitePath"));
+        assertEquals(8, readAccessor(storageConfig, "poolMaximumSize"));
     }
 
     @Test
-    void missingOptionalBootstrapDiagnosticsMatchAndQueueValuesUseDocumentedDefaults() {
+    void missingOptionalBootstrapDiagnosticsMatchQueueAndStorageValuesUseDocumentedDefaults() {
         Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of("config-version", 1)));
 
         RevPracConfig config = assertOk(result);
@@ -93,6 +103,10 @@ final class LoadValidatedConfigServiceContractTest {
         assertEquals(50, readAccessor(rankedWindows.get(0), "ratingWindow"));
         assertEquals(45L, readAccessor(rankedWindows.get(4), "waitSeconds"));
         assertEquals(400, readAccessor(rankedWindows.get(4), "ratingWindow"));
+        Object storageConfig = readAccessor(config, "storage");
+        assertEquals("sqlite", readAccessor(storageConfig, "backend"));
+        assertEquals("data/revprac.db", readAccessor(storageConfig, "sqlitePath"));
+        assertEquals(4, readAccessor(storageConfig, "poolMaximumSize"));
     }
 
     @Test
@@ -100,7 +114,8 @@ final class LoadValidatedConfigServiceContractTest {
         Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
                 "config-version", 1,
                 "matches", Map.of(),
-                "queues", Map.of())));
+                "queues", Map.of(),
+                "storage", Map.of())));
 
         RevPracConfig config = assertOk(result);
 
@@ -113,6 +128,10 @@ final class LoadValidatedConfigServiceContractTest {
         assertEquals(1000, readAccessor(queueConfig, "rankedBaseRating"));
         assertEquals(20, readAccessor(queueConfig, "ticksPerSecond"));
         assertEquals(5, assertInstanceOf(List.class, readAccessor(queueConfig, "rankedWindows")).size());
+        Object storageConfig = readAccessor(config, "storage");
+        assertEquals("sqlite", readAccessor(storageConfig, "backend"));
+        assertEquals("data/revprac.db", readAccessor(storageConfig, "sqlitePath"));
+        assertEquals(4, readAccessor(storageConfig, "poolMaximumSize"));
     }
 
     @Test
@@ -218,6 +237,43 @@ final class LoadValidatedConfigServiceContractTest {
     }
 
     @Test
+    void malformedStorageParentReturnsConfigurationProblemAtStoragePath() {
+        Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "storage", "not-a-section")));
+
+        Problem problem = assertErr(result);
+
+        assertEquals(ProblemCategory.CONFIGURATION, problem.category());
+        assertEquals("storage", problem.path());
+    }
+
+    @Test
+    void invalidStorageBackendReturnsProblemNamingExactPath() {
+        Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "storage.backend", "postgresql")));
+
+        Problem problem = assertErr(result);
+
+        assertEquals(ProblemCategory.CONFIGURATION, problem.category());
+        assertEquals("storage.backend", problem.path());
+    }
+
+    @Test
+    void invalidStoragePoolSizeReturnsProblemNamingExactPath() {
+        Problem zeroProblem = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "storage.pool-maximum-size", 0))));
+        Problem nonWholeProblem = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "storage.pool-maximum-size", 2.5d))));
+
+        assertEquals("storage.pool-maximum-size", zeroProblem.path());
+        assertEquals("storage.pool-maximum-size", nonWholeProblem.path());
+    }
+
+    @Test
     void nonPositiveMatchMaxDurationReturnsConfigurationProblemNamingExactPath() {
         Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
                 "config-version", 1,
@@ -308,14 +364,46 @@ final class LoadValidatedConfigServiceContractTest {
     }
 
     @Test
+    void storageConfigDefaultsAndConstructorRejectInvalidValues() throws ReflectiveOperationException {
+        Class<?> storageConfigType = Class.forName(STORAGE_CONFIG_TYPE);
+
+        Object defaults = storageConfigType.getMethod("defaults").invoke(null);
+        assertEquals("sqlite", storageConfigType.getMethod("backend").invoke(defaults));
+        assertEquals("data/revprac.db", storageConfigType.getMethod("sqlitePath").invoke(defaults));
+        assertEquals(4, storageConfigType.getMethod("poolMaximumSize").invoke(defaults));
+
+        assertInstanceOf(
+                IllegalArgumentException.class,
+                assertThrows(
+                                InvocationTargetException.class,
+                                () -> storageConfigType
+                                        .getDeclaredConstructor(String.class, String.class, int.class)
+                                        .newInstance("postgresql", "data/revprac.db", 4))
+                        .getCause());
+        assertInstanceOf(
+                IllegalArgumentException.class,
+                assertThrows(
+                                InvocationTargetException.class,
+                                () -> storageConfigType
+                                        .getDeclaredConstructor(String.class, String.class, int.class)
+                                        .newInstance("sqlite", "data/revprac.db", 0))
+                        .getCause());
+    }
+
+    @Test
     void loadValidatedConfigServiceHasNoBukkitOrPaperDependency() throws IOException {
         Path serviceSource = Path.of("src/main/java/io/github/xreatlabz/revprac/application/config/LoadValidatedConfigService.java");
+        Path storageConfigSource = Path.of("src/main/java/io/github/xreatlabz/revprac/application/config/StorageConfig.java");
 
         assertTrue(Files.exists(serviceSource), "Expected source file to exist: " + serviceSource);
+        assertTrue(Files.exists(storageConfigSource), "Expected source file to exist: " + storageConfigSource);
         String source = Files.readString(serviceSource);
+        String storageSource = Files.readString(storageConfigSource);
 
         assertFalse(source.contains("org.bukkit"), "LoadValidatedConfigService must not depend on Bukkit");
         assertFalse(source.contains("io.papermc.paper"), "LoadValidatedConfigService must not depend on Paper");
+        assertFalse(storageSource.contains("org.bukkit"), "StorageConfig must not depend on Bukkit");
+        assertFalse(storageSource.contains("io.papermc.paper"), "StorageConfig must not depend on Paper");
     }
 
     private static RevPracConfig assertOk(Result<RevPracConfig> result) {

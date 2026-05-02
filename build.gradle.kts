@@ -23,6 +23,10 @@ dependencyLocking {
 dependencies {
     compileOnly(libs.paper.api)
 
+    implementation(libs.hikaricp)
+    implementation(libs.flyway.core)
+    runtimeOnly(libs.sqlite.jdbc)
+
     testImplementation(libs.paper.api)
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.mockbukkit)

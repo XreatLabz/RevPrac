@@ -9,6 +9,7 @@ import io.github.xreatlabz.revprac.domain.queues.MatchmakingWindowPolicy;
 import io.github.xreatlabz.revprac.ports.config.ConfigSource;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public final class LoadValidatedConfigService {
@@ -62,6 +63,9 @@ public final class LoadValidatedConfigService {
         if (hasMalformedQueuesParent(source)) {
             return err("configuration.invalid-type", "Expected a configuration section at queues", "queues");
         }
+        if (hasMalformedStorageParent(source)) {
+            return err("configuration.invalid-type", "Expected a configuration section at storage", "storage");
+        }
 
         ParsedPositiveInt duelRequestExpirySeconds = readPositiveIntWithDefault(
                 source,
@@ -102,6 +106,12 @@ public final class LoadValidatedConfigService {
         }
         QueueConfig queueConfig = ((Ok<QueueConfig>) queueConfigResult).value();
 
+        Result<StorageConfig> storageConfigResult = readStorageConfig(source);
+        if (storageConfigResult instanceof Err<StorageConfig> storageConfigErr) {
+            return new Err<>(storageConfigErr.problem());
+        }
+        StorageConfig storageConfig = ((Ok<StorageConfig>) storageConfigResult).value();
+
         RevPracConfig config = new RevPracConfig(
                 configVersion,
                 new BootstrapConfig(failFastOnEnable),
@@ -111,7 +121,8 @@ public final class LoadValidatedConfigService {
                         countdownTicks.value(),
                         maxDurationTicks.value(),
                         spectatorsEnabled),
-                queueConfig);
+                queueConfig,
+                storageConfig);
         return new Ok<>(config);
     }
 
@@ -180,6 +191,11 @@ public final class LoadValidatedConfigService {
     private boolean hasMalformedQueuesParent(ConfigSource source) {
         LookupValue queuesValue = read(source, "queues");
         return queuesValue.present() && !isSectionLikeConfigValue(queuesValue.value());
+    }
+
+    private boolean hasMalformedStorageParent(ConfigSource source) {
+        LookupValue storageValue = read(source, "storage");
+        return storageValue.present() && !isSectionLikeConfigValue(storageValue.value());
     }
 
     private Result<QueueConfig> readQueueConfig(ConfigSource source) {
@@ -281,6 +297,43 @@ public final class LoadValidatedConfigService {
         return new Ok<>(List.copyOf(rankedWindows));
     }
 
+    private Result<StorageConfig> readStorageConfig(ConfigSource source) {
+        ParsedString backend = readStringWithDefault(source, "storage.backend", StorageConfig.SQLITE_BACKEND);
+        if (!backend.valid()) {
+            return new Err<>(problem(backend.code(), backend.message(), backend.path()));
+        }
+
+        String normalizedBackend = backend.value().trim().toLowerCase(Locale.ROOT);
+        if (!StorageConfig.SQLITE_BACKEND.equals(normalizedBackend)) {
+            return new Err<>(problem(
+                    "configuration.invalid-value",
+                    "Unsupported storage backend " + backend.value() + "; expected " + StorageConfig.SQLITE_BACKEND,
+                    "storage.backend"));
+        }
+
+        ParsedString sqlitePath =
+                readStringWithDefault(source, "storage.sqlite-path", StorageConfig.DEFAULT_SQLITE_PATH);
+        if (!sqlitePath.valid()) {
+            return new Err<>(problem(sqlitePath.code(), sqlitePath.message(), sqlitePath.path()));
+        }
+        if (sqlitePath.value().isBlank()) {
+            return new Err<>(problem(
+                    "configuration.invalid-value",
+                    "Expected a non-blank string at storage.sqlite-path",
+                    "storage.sqlite-path"));
+        }
+
+        ParsedPositiveInt poolMaximumSize = readPositiveIntWithDefault(
+                source,
+                "storage.pool-maximum-size",
+                StorageConfig.DEFAULT_POOL_MAXIMUM_SIZE);
+        if (!poolMaximumSize.valid()) {
+            return new Err<>(problem(poolMaximumSize.code(), poolMaximumSize.message(), poolMaximumSize.path()));
+        }
+
+        return new Ok<>(new StorageConfig(normalizedBackend, sqlitePath.value(), poolMaximumSize.value()));
+    }
+
     private boolean isSectionLikeConfigValue(Object value) {
         if (value == null) {
             return false;
@@ -319,6 +372,20 @@ public final class LoadValidatedConfigService {
     }
 
     private record ParsedPositiveInt(boolean valid, Integer value, String code, String message, String path) {
+    }
+
+    private record ParsedString(boolean valid, String value, String code, String message, String path) {
+    }
+
+    private ParsedString readStringWithDefault(ConfigSource source, String path, String defaultValue) {
+        LookupValue value = read(source, path);
+        if (!value.present()) {
+            return new ParsedString(true, defaultValue, null, null, path);
+        }
+        if (value.value() instanceof String stringValue) {
+            return new ParsedString(true, stringValue, null, null, path);
+        }
+        return new ParsedString(false, null, "configuration.invalid-type", "Expected a string at " + path, path);
     }
 
     private ParsedPositiveInt readPositiveInt(Object rawValue, String path) {

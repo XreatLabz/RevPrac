@@ -98,3 +98,17 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: `QueueService` uses `PlayerStatePort` for generic online checks during queue join and shutdown drain instead of depending on the match-specific `MatchPlayerPort`.
 - Decision: `BootstrapRuntime.shutdown()` closes `QueueMatchmakingService` intake before cancelling the queue ticker and draining queue tickets.
 - Rationale: Queue presence checks belong on the shared player-state boundary, and shutdown must stop new matchmaking sweeps before queue-drain teardown begins.
+
+## 2026-05-02: Phase 6A Durable Profiles and Ratings
+
+- Decision: Implement Phase 6A as a SQLite-only durable slice for player profiles and queue rating seeds, with `storage.backend`, `storage.sqlite-path`, and `storage.pool-maximum-size` owned by `StorageConfig`.
+- Decision: Declare HikariCP, Flyway, and sqlite-jdbc as runtime libraries in `plugin.yml`, and run Flyway migrations from `classpath:db/migration` during bootstrap before repositories are exposed.
+- Decision: Keep storage bootstrap fail-closed and close the storage runtime after queue, match, and player teardown in `BootstrapRuntime.shutdown()`.
+- Decision: Defer match-history settlement, stats, seasons, PostgreSQL, and import/export to later Phase 6 slices.
+- Rationale: RevPrac needs a small durable spine for player identity and queue seeding before broad competitive history and alternative storage backends are added.
+
+## 2026-05-02: Phase 6A Persistence Failure-Path Hardening
+
+- Decision: Close the JDBC storage runtime if any bootstrap step after storage creation fails before `RevPracPlugin` receives a `BootstrapRuntime`.
+- Decision: Preserve the stored profile `first_seen_at` on JDBC conflict updates and keep profile `last_seen_at` monotonic when the system clock moves backward.
+- Rationale: Failed enable paths must not leak Hikari resources, and durable player identity timestamps should remain stable even when host time is corrected.
