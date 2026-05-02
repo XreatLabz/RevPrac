@@ -6,17 +6,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionRepository;
+import io.github.xreatlabz.revprac.application.players.PlayerProfileService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
 import io.github.xreatlabz.revprac.domain.players.InventorySnapshot;
 import io.github.xreatlabz.revprac.domain.players.LocationSnapshot;
 import io.github.xreatlabz.revprac.domain.players.PlayerContext;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
+import io.github.xreatlabz.revprac.domain.players.PlayerProfile;
 import io.github.xreatlabz.revprac.domain.players.PlayerSafetySnapshot;
 import io.github.xreatlabz.revprac.domain.players.PlayerStatusSnapshot;
 import io.github.xreatlabz.revprac.domain.players.TransitionReason;
+import io.github.xreatlabz.revprac.ports.players.PlayerProfileRepository;
 import io.github.xreatlabz.revprac.ports.players.PlayerStatePort;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import net.kyori.adventure.text.Component;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -80,6 +88,41 @@ final class PaperPlayerSessionListenerTest {
     }
 
     @Test
+    void joinEventTouchesThePlayerProfileAfterTheDeferredJoinTick() {
+        ServerMock server = MockBukkit.mock();
+        try {
+            var plugin = MockBukkit.createMockPlugin();
+            PlayerMock player = server.addPlayer("profile-touch");
+            PlayerId playerId = new PlayerId(player.getUniqueId());
+            InMemoryPlayerSessionRepository sessionRepository = new InMemoryPlayerSessionRepository();
+            InMemoryPendingRestorationRepository pendingRepository = new InMemoryPendingRestorationRepository();
+            RecordingStatePort statePort = new RecordingStatePort();
+            PlayerSessionService sessionService = new PlayerSessionService(sessionRepository, pendingRepository, statePort);
+            FakePlayerProfileRepository profileRepository = new FakePlayerProfileRepository();
+            PlayerProfileService profileService = new PlayerProfileService(profileRepository);
+            Instant joinInstant = Instant.parse("2026-05-02T12:00:00Z");
+            PaperPlayerSessionListener listener = new PaperPlayerSessionListener(
+                    plugin,
+                    sessionService,
+                    profileService,
+                    Clock.fixed(joinInstant, ZoneOffset.UTC));
+
+            listener.onPlayerJoin(new PlayerJoinEvent(player, Component.text("joined")));
+
+            assertTrue(profileRepository.find(playerId).isEmpty(), "Profile touch should stay deferred with the join task");
+
+            server.getScheduler().performOneTick();
+
+            assertEquals(
+                    new PlayerProfile(playerId, Optional.of("profile-touch"), joinInstant, joinInstant),
+                    profileRepository.find(playerId).orElseThrow());
+            assertTrue(sessionRepository.find(playerId).isPresent(), "Join should still open the lobby session");
+        } finally {
+            MockBukkit.unmock();
+        }
+    }
+
+    @Test
     void quitEventDelegatesToThePlayerSessionService() {
         ServerMock server = MockBukkit.mock();
         try {
@@ -133,6 +176,20 @@ final class PaperPlayerSessionListenerTest {
         @Override
         public boolean isOnline(PlayerId playerId) {
             return true;
+        }
+    }
+
+    private static final class FakePlayerProfileRepository implements PlayerProfileRepository {
+        private final Map<PlayerId, PlayerProfile> profiles = new ConcurrentHashMap<>();
+
+        @Override
+        public Optional<PlayerProfile> find(PlayerId playerId) {
+            return Optional.ofNullable(profiles.get(playerId));
+        }
+
+        @Override
+        public void upsert(PlayerProfile profile) {
+            profiles.put(profile.playerId(), profile);
         }
     }
 }

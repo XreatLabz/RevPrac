@@ -5,6 +5,10 @@ description: Minecraft practice core plugin for Modern Paper 1.21.11.
 authors: [XreatLabz]
 website: https://github.com/XreatLabz/RevPrac
 api-version: '1.21.11'
+libraries:
+  - com.zaxxer:HikariCP:7.0.2
+  - org.flywaydb:flyway-core:12.5.0
+  - org.xerial:sqlite-jdbc:3.53.0.0
 commands:
   revprac:
     description: RevPrac admin setup commands.

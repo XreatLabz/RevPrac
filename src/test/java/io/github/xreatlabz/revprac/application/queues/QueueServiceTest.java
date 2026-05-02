@@ -11,11 +11,11 @@ import io.github.xreatlabz.revprac.adapters.storage.InMemoryKitRegistryRepositor
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryMatchRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionRepository;
-import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueRatingRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueTicketRepository;
 import io.github.xreatlabz.revprac.application.config.QueueConfig;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
+import io.github.xreatlabz.revprac.application.ratings.RatingService;
 import io.github.xreatlabz.revprac.domain.kits.KitDefinition;
 import io.github.xreatlabz.revprac.domain.kits.KitId;
 import io.github.xreatlabz.revprac.domain.kits.KitInventory;
@@ -33,9 +33,10 @@ import io.github.xreatlabz.revprac.domain.queues.QueueMode;
 import io.github.xreatlabz.revprac.domain.queues.QueueTicket;
 import io.github.xreatlabz.revprac.domain.queues.QueueTicketId;
 import io.github.xreatlabz.revprac.domain.queues.QueuedMatchAssignment;
+import io.github.xreatlabz.revprac.domain.ratings.PlayerRating;
 import io.github.xreatlabz.revprac.ports.matches.MatchPlayerPort;
 import io.github.xreatlabz.revprac.ports.players.PlayerStatePort;
-import io.github.xreatlabz.revprac.ports.queues.QueueRatingRepository;
+import io.github.xreatlabz.revprac.ports.ratings.PlayerRatingRepository;
 import io.github.xreatlabz.revprac.ports.queues.QueueTicketRepository;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -46,9 +47,11 @@ import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
@@ -166,6 +169,26 @@ final class QueueServiceTest {
     }
 
     @Test
+    void firstRankedJoinPersistsADurableRatingSeedForThePlayerAndKit() {
+        Harness harness = new Harness(new InMemoryQueueTicketRepository());
+        PlayerId playerId = player("durable-seed-player");
+        harness.join(playerId);
+
+        QueueTicket ticket = harness.queueService.join(playerId, QueueMode.RANKED, harness.rankedKitId(), 17L);
+
+        assertEquals(QueueConfig.DEFAULT_RANKED_BASE_RATING, ticket.searchRating());
+        assertEquals(
+                new PlayerRating(
+                        playerId,
+                        harness.rankedKitId(),
+                        QueueConfig.DEFAULT_RANKED_BASE_RATING,
+                        0,
+                        0,
+                        Instant.parse("2026-05-01T12:00:00Z")),
+                harness.ratingRepository.find(playerId, harness.rankedKitId()).orElseThrow());
+    }
+
+    @Test
     void failedLeaveRestoreKeepsTheActiveTicketForRetry() {
         Harness harness = new Harness(new InMemoryQueueTicketRepository());
         PlayerId playerId = player("failed-leave-restore-player");
@@ -276,8 +299,8 @@ final class QueueServiceTest {
     }
 
     @Test
-    void failedRatingLookupAfterQueueTransitionRollsThePlayerBackToLobby() {
-        Harness harness = new Harness(new InMemoryQueueTicketRepository(), new ThrowingRatingRepository());
+    void failedRatingServiceLookupAfterQueueTransitionRollsThePlayerBackToLobby() {
+        Harness harness = new Harness(new InMemoryQueueTicketRepository(), new RatingService(new ThrowingRatingRepository()));
         PlayerId playerId = player("rating-lookup-failure-player");
         harness.join(playerId);
 
@@ -286,6 +309,22 @@ final class QueueServiceTest {
                 () -> harness.queueService.join(playerId, QueueMode.RANKED, harness.rankedKitId(), 45L));
 
         assertEquals("rating lookup failed", failure.getMessage());
+        assertEquals(PlayerContext.LOBBY, harness.playerSessions.find(playerId).orElseThrow().context());
+        assertTrue(harness.queueService.ticket(playerId).isEmpty());
+        assertTrue(harness.playerStatePort.restoredPlayers.contains(playerId));
+    }
+
+    @Test
+    void failedRatingSeedPersistenceAfterTicketCreationDeletesTheTicketAndRollsThePlayerBackToLobby() {
+        Harness harness = new Harness(new InMemoryQueueTicketRepository(), new RatingService(new ThrowingSeedSaveRatingRepository()));
+        PlayerId playerId = player("rating-seed-save-failure-player");
+        harness.join(playerId);
+
+        IllegalStateException failure = assertThrows(
+                IllegalStateException.class,
+                () -> harness.queueService.join(playerId, QueueMode.RANKED, harness.rankedKitId(), 46L));
+
+        assertEquals("rating seed save failed", failure.getMessage());
         assertEquals(PlayerContext.LOBBY, harness.playerSessions.find(playerId).orElseThrow().context());
         assertTrue(harness.queueService.ticket(playerId).isEmpty());
         assertTrue(harness.playerStatePort.restoredPlayers.contains(playerId));
@@ -321,6 +360,7 @@ final class QueueServiceTest {
         private final InMemoryPendingRestorationRepository pendingRestorations = new InMemoryPendingRestorationRepository();
         private final InMemoryPlayerSessionRepository playerSessions = new InMemoryPlayerSessionRepository();
         private final FakePlayerStatePort playerStatePort = new FakePlayerStatePort();
+        private final FakePlayerRatingRepository ratingRepository;
         private final PlayerSessionService playerSessionService =
                 new PlayerSessionService(playerSessions, pendingRestorations, playerStatePort);
         private final FakeMatchPlayerPort matchPlayerPort = new FakeMatchPlayerPort();
@@ -333,14 +373,31 @@ final class QueueServiceTest {
         private final QueueService queueService;
 
         private Harness(QueueTicketRepository queueTicketRepository) {
-            this(queueTicketRepository, new InMemoryQueueRatingRepository());
-        }
-
-        private Harness(QueueTicketRepository queueTicketRepository, QueueRatingRepository queueRatingRepository) {
+            FakePlayerRatingRepository ratingRepository = new FakePlayerRatingRepository();
             this.queueTicketRepository = queueTicketRepository;
+            this.ratingRepository = ratingRepository;
             this.queueService = new QueueService(
                     queueTicketRepository,
-                    queueRatingRepository,
+                    new RatingService(ratingRepository),
+                    new PlayerAvailabilityService(
+                            new InMemoryMatchRepository(),
+                            new InMemoryDuelRequestRepository(),
+                            queueTicketRepository),
+                    playerSessionService,
+                    kitRegistryService,
+                    playerStatePort,
+                    Clock.fixed(Instant.parse("2026-05-01T12:00:00Z"), ZoneOffset.UTC),
+                    QueueConfig.defaults());
+            kitRegistryService.register(kitDefinition(rankedKitId(), "Ranked Kit", true));
+            kitRegistryService.register(kitDefinition(unrankedKitId(), "Boxing", false));
+        }
+
+        private Harness(QueueTicketRepository queueTicketRepository, RatingService ratingService) {
+            this.queueTicketRepository = queueTicketRepository;
+            this.ratingRepository = null;
+            this.queueService = new QueueService(
+                    queueTicketRepository,
+                    ratingService,
                     new PlayerAvailabilityService(
                             new InMemoryMatchRepository(),
                             new InMemoryDuelRequestRepository(),
@@ -397,17 +454,47 @@ final class QueueServiceTest {
         }
     }
 
-    private static final class ThrowingRatingRepository implements QueueRatingRepository {
+    private static final class FakePlayerRatingRepository implements PlayerRatingRepository {
+        private final Map<RatingKey, PlayerRating> ratings = new ConcurrentHashMap<>();
 
         @Override
-        public int rating(PlayerId playerId, KitId kitId, int defaultRating) {
+        public Optional<PlayerRating> find(PlayerId playerId, KitId kitId) {
+            return Optional.ofNullable(ratings.get(new RatingKey(playerId, kitId)));
+        }
+
+        @Override
+        public void upsert(PlayerRating rating) {
+            ratings.put(new RatingKey(rating.playerId(), rating.kitId()), rating);
+        }
+    }
+
+    private static final class ThrowingRatingRepository implements PlayerRatingRepository {
+
+        @Override
+        public Optional<PlayerRating> find(PlayerId playerId, KitId kitId) {
             throw new IllegalStateException("rating lookup failed");
         }
 
         @Override
-        public void save(PlayerId playerId, KitId kitId, int rating) {
+        public void upsert(PlayerRating rating) {
             throw new UnsupportedOperationException("not needed for QueueService tests");
         }
+    }
+
+    private static final class ThrowingSeedSaveRatingRepository implements PlayerRatingRepository {
+
+        @Override
+        public Optional<PlayerRating> find(PlayerId playerId, KitId kitId) {
+            return Optional.empty();
+        }
+
+        @Override
+        public void upsert(PlayerRating rating) {
+            throw new IllegalStateException("rating seed save failed");
+        }
+    }
+
+    private record RatingKey(PlayerId playerId, KitId kitId) {
     }
 
     private static final class FakeMatchPlayerPort implements MatchPlayerPort {

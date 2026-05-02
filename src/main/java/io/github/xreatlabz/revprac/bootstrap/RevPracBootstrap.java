@@ -16,16 +16,18 @@ import io.github.xreatlabz.revprac.adapters.paper.queues.PaperQueueLifecycleList
 import io.github.xreatlabz.revprac.adapters.paper.queues.PaperQueueTicker;
 import io.github.xreatlabz.revprac.adapters.paper.players.PaperPlayerSessionListener;
 import io.github.xreatlabz.revprac.adapters.paper.players.PaperPlayerStateAdapter;
+import io.github.xreatlabz.revprac.adapters.storage.jdbc.JdbcStorageFactory;
+import io.github.xreatlabz.revprac.adapters.storage.jdbc.JdbcStorageRuntime;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryArenaRegistryRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryDuelRequestRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryKitRegistryRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryMatchRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionRepository;
-import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueRatingRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueTicketRepository;
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
+import io.github.xreatlabz.revprac.application.players.PlayerProfileService;
 import io.github.xreatlabz.revprac.application.config.LoadValidatedConfigService;
 import io.github.xreatlabz.revprac.application.config.QueueConfig;
 import io.github.xreatlabz.revprac.application.config.RevPracConfig;
@@ -35,6 +37,7 @@ import io.github.xreatlabz.revprac.application.matches.MatchLifecycleService;
 import io.github.xreatlabz.revprac.application.queues.PlayerAvailabilityService;
 import io.github.xreatlabz.revprac.application.queues.QueueMatchmakingService;
 import io.github.xreatlabz.revprac.application.queues.QueueService;
+import io.github.xreatlabz.revprac.application.ratings.RatingService;
 import io.github.xreatlabz.revprac.application.result.Err;
 import io.github.xreatlabz.revprac.application.result.Ok;
 import io.github.xreatlabz.revprac.application.result.Problem;
@@ -46,7 +49,6 @@ import io.github.xreatlabz.revprac.domain.queues.MatchmakingWindowPolicy;
 import io.github.xreatlabz.revprac.ports.matches.DuelRequestRepository;
 import io.github.xreatlabz.revprac.ports.matches.MatchRepository;
 import io.github.xreatlabz.revprac.ports.lifecycle.LifecycleReporter;
-import io.github.xreatlabz.revprac.ports.queues.QueueRatingRepository;
 import io.github.xreatlabz.revprac.ports.queues.QueueTicketRepository;
 import java.time.Clock;
 import java.time.Duration;
@@ -109,16 +111,30 @@ public final class RevPracBootstrap {
             return new Err<>(problem);
         }
 
+        JdbcStorageRuntime storageRuntime;
+        try {
+            storageRuntime = JdbcStorageFactory.create(plugin.getDataFolder().toPath(), config.storage());
+        } catch (RuntimeException exception) {
+            Problem problem = new Problem(
+                    "storage.unavailable",
+                    ProblemCategory.CONFIGURATION,
+                    exception.getMessage(),
+                    "bootstrap.storage");
+            handleStartupFailure(plugin, lifecycleReporter, configSource, problem);
+            return new Err<>(problem);
+        }
+
         PaperPlayerStateAdapter playerStateAdapter = new PaperPlayerStateAdapter(plugin.getServer());
         PlayerSessionService playerSessionService = new PlayerSessionService(
                 new InMemoryPlayerSessionRepository(),
                 new InMemoryPendingRestorationRepository(),
                 playerStateAdapter);
+        PlayerProfileService playerProfileService = new PlayerProfileService(storageRuntime.playerProfileRepository());
+        RatingService ratingService = new RatingService(storageRuntime.playerRatingRepository());
         PaperKitLoadoutAdapter kitLoadoutAdapter = new PaperKitLoadoutAdapter();
         MatchRepository matchRepository = new InMemoryMatchRepository();
         DuelRequestRepository duelRequestRepository = new InMemoryDuelRequestRepository();
         QueueTicketRepository queueTicketRepository = new InMemoryQueueTicketRepository();
-        QueueRatingRepository queueRatingRepository = new InMemoryQueueRatingRepository();
         PlayerAvailabilityService availabilityService =
                 new PlayerAvailabilityService(matchRepository, duelRequestRepository, queueTicketRepository);
         QueueConfig queueConfig = config.queues();
@@ -150,7 +166,7 @@ public final class RevPracBootstrap {
                 eventSink);
         QueueService queueService = new QueueService(
                 queueTicketRepository,
-                queueRatingRepository,
+                ratingService,
                 availabilityService,
                 playerSessionService,
                 kitRegistryService,
@@ -162,7 +178,8 @@ public final class RevPracBootstrap {
                 matchLifecycleService,
                 new MatchmakingWindowPolicy(queueConfig.rankedWindows()),
                 queueConfig);
-        PaperPlayerSessionListener playerSessionListener = new PaperPlayerSessionListener(plugin, playerSessionService);
+        PaperPlayerSessionListener playerSessionListener =
+                new PaperPlayerSessionListener(plugin, playerSessionService, playerProfileService, Clock.systemUTC());
         PaperMatchLifecycleListener matchLifecycleListener =
                 new PaperMatchLifecycleListener(matchLifecycleService, matchRepository, matchPlayerAdapter);
         PaperQueueLifecycleListener queueLifecycleListener = new PaperQueueLifecycleListener(queueService);
@@ -187,7 +204,8 @@ public final class RevPracBootstrap {
                 paperMatchTicker,
                 queueService,
                 queueMatchmakingService,
-                paperQueueTicker);
+                paperQueueTicker,
+                storageRuntime);
         Objects.requireNonNull(plugin.getCommand("revprac"), "revprac command must be declared in plugin.yml")
                 .setExecutor(new RevPracAdminCommand(runtime, kitLoadoutAdapter));
         Objects.requireNonNull(plugin.getCommand("duel"), "duel command must be declared in plugin.yml")

@@ -23,3 +23,7 @@ queues:
       rating-window: 250
     - wait-seconds: 45
       rating-window: 400
+storage:
+  backend: sqlite
+  sqlite-path: data/revprac.db
+  pool-maximum-size: 4

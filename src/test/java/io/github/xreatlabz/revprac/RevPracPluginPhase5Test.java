@@ -118,7 +118,9 @@ final class RevPracPluginPhase5Test {
         Object matchmakingRepository = field(runtime.queueMatchmakingService(), "queueTicketRepository");
         Object availabilityService = field(runtime.duelRequestService(), "availabilityService");
         Object availabilityRepository = field(availabilityService, "queueTicketRepository");
-        Object ratingRepository = field(runtime.queueService(), "queueRatingRepository");
+        Object ratingService = field(runtime.queueService(), "ratingService");
+        Object ratingStore = field(ratingService, "ratingStore");
+        Object playerRatingRepository = field(ratingStore, "playerRatingRepository");
         Object matchmakingPolicy = field(runtime.queueMatchmakingService(), "matchmakingWindowPolicy");
         Object sessionPlayerStatePort = field(field(runtime, "playerSessionService"), "playerStatePort");
         Object queuePlayerStatePort = field(runtime.queueService(), "playerStatePort");
@@ -127,7 +129,9 @@ final class RevPracPluginPhase5Test {
         assertSame(queueRepository, availabilityRepository);
         assertSame(sessionPlayerStatePort, queuePlayerStatePort);
         assertInstanceOf(InMemoryQueueTicketRepository.class, queueRepository);
-        assertInstanceOf(InMemoryQueueRatingRepository.class, ratingRepository);
+        assertEquals(
+                "io.github.xreatlabz.revprac.adapters.storage.jdbc.JdbcPlayerRatingRepository",
+                playerRatingRepository.getClass().getName());
         assertEquals(new MatchmakingWindowPolicy(runtime.config().queues().rankedWindows()), matchmakingPolicy);
         assertEquals(
                 runtime.config().queues().matchmakingPeriodTicks(),

@@ -4,6 +4,7 @@ import io.github.xreatlabz.revprac.adapters.paper.arenas.PaperArenaRegistryFiles
 import io.github.xreatlabz.revprac.adapters.paper.kits.PaperKitRegistryFiles;
 import io.github.xreatlabz.revprac.adapters.paper.matches.PaperMatchTicker;
 import io.github.xreatlabz.revprac.adapters.paper.queues.PaperQueueTicker;
+import io.github.xreatlabz.revprac.adapters.storage.jdbc.JdbcStorageRuntime;
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.config.RevPracConfig;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
@@ -31,6 +32,7 @@ public final class BootstrapRuntime {
     private final QueueService queueService;
     private final QueueMatchmakingService queueMatchmakingService;
     private final PaperQueueTicker paperQueueTicker;
+    private final AutoCloseable storageRuntime;
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
 
     public BootstrapRuntime(
@@ -105,6 +107,38 @@ public final class BootstrapRuntime {
             QueueService queueService,
             QueueMatchmakingService queueMatchmakingService,
             PaperQueueTicker paperQueueTicker) {
+        this(
+                config,
+                lifecycleReporter,
+                playerSessionService,
+                arenaRegistryService,
+                kitRegistryService,
+                arenaRegistryFiles,
+                kitRegistryFiles,
+                duelRequestService,
+                matchLifecycleService,
+                paperMatchTicker,
+                queueService,
+                queueMatchmakingService,
+                paperQueueTicker,
+                null);
+    }
+
+    public BootstrapRuntime(
+            RevPracConfig config,
+            LifecycleReporter lifecycleReporter,
+            PlayerSessionService playerSessionService,
+            ArenaRegistryService arenaRegistryService,
+            KitRegistryService kitRegistryService,
+            PaperArenaRegistryFiles arenaRegistryFiles,
+            PaperKitRegistryFiles kitRegistryFiles,
+            DuelRequestService duelRequestService,
+            MatchLifecycleService matchLifecycleService,
+            PaperMatchTicker paperMatchTicker,
+            QueueService queueService,
+            QueueMatchmakingService queueMatchmakingService,
+            PaperQueueTicker paperQueueTicker,
+            AutoCloseable storageRuntime) {
         this.config = Objects.requireNonNull(config, "config");
         this.lifecycleReporter = Objects.requireNonNull(lifecycleReporter, "lifecycleReporter");
         this.playerSessionService = Objects.requireNonNull(playerSessionService, "playerSessionService");
@@ -118,6 +152,7 @@ public final class BootstrapRuntime {
         this.queueService = queueService;
         this.queueMatchmakingService = queueMatchmakingService;
         this.paperQueueTicker = paperQueueTicker;
+        this.storageRuntime = storageRuntime;
     }
 
     public RevPracConfig config() {
@@ -164,6 +199,10 @@ public final class BootstrapRuntime {
         return paperQueueTicker;
     }
 
+    public JdbcStorageRuntime storageRuntime() {
+        return storageRuntime instanceof JdbcStorageRuntime jdbcStorageRuntime ? jdbcStorageRuntime : null;
+    }
+
     public void shutdown() {
         if (shutdown.get()) {
             return;
@@ -178,6 +217,13 @@ public final class BootstrapRuntime {
         failure = attemptShutdownStep(failure, paperMatchTicker, PaperMatchTicker::cancel);
         failure = attemptShutdownStep(failure, matchLifecycleService, MatchLifecycleService::shutdownAll);
         failure = attemptShutdownStep(failure, playerSessionService, PlayerSessionService::shutdownAll);
+        failure = attemptShutdownStep(failure, storageRuntime, runtime -> {
+            try {
+                runtime.close();
+            } catch (Exception exception) {
+                throw new IllegalStateException("storage runtime shutdown failed", exception);
+            }
+        });
         if (failure != null) {
             throw failure;
         }
