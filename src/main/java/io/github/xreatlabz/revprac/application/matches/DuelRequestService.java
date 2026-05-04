@@ -12,7 +12,6 @@ import io.github.xreatlabz.revprac.domain.matches.DuelRequestId;
 import io.github.xreatlabz.revprac.domain.matches.DuelRequestState;
 import io.github.xreatlabz.revprac.domain.matches.Match;
 import io.github.xreatlabz.revprac.domain.matches.MatchEvent;
-import io.github.xreatlabz.revprac.domain.matches.MatchState;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
 import io.github.xreatlabz.revprac.ports.matches.DuelRequestRepository;
 import io.github.xreatlabz.revprac.ports.matches.MatchPlayerPort;
@@ -205,16 +204,16 @@ public final class DuelRequestService {
     }
 
     private void requireAvailableForAcceptedDuel(PlayerId playerId, String role, DuelRequestId acceptedRequestId) {
-        if (hasActiveMatch(playerId)
+        if (hasRetainedMatch(playerId)
                 || hasOtherPendingDuelRequest(playerId, acceptedRequestId)
                 || availabilityService.isQueued(playerId)) {
             throw new IllegalStateException(role + " is already busy");
         }
     }
 
-    private boolean hasActiveMatch(PlayerId playerId) {
-        return matchRepository.findByPlayer(playerId).filter(DuelRequestService::isActiveMatch).isPresent()
-                || matchRepository.findBySpectator(playerId).filter(DuelRequestService::isActiveMatch).isPresent();
+    private boolean hasRetainedMatch(PlayerId playerId) {
+        return matchRepository.findByPlayer(playerId).isPresent()
+                || matchRepository.findBySpectator(playerId).isPresent();
     }
 
     private boolean hasOtherPendingDuelRequest(PlayerId playerId, DuelRequestId acceptedRequestId) {
@@ -223,10 +222,6 @@ public final class DuelRequestService {
                 .filter(duelRequest -> duelRequest.state() == DuelRequestState.PENDING)
                 .anyMatch(duelRequest -> duelRequest.requesterId().equals(playerId)
                         || duelRequest.targetId().equals(playerId));
-    }
-
-    private static boolean isActiveMatch(Match match) {
-        return match.state() != MatchState.COMPLETED;
     }
 
     private ArenaDefinition requireArena(ArenaId arenaId) {

@@ -14,6 +14,7 @@ import io.github.xreatlabz.revprac.domain.matches.Match;
 import io.github.xreatlabz.revprac.domain.matches.MatchEndReason;
 import io.github.xreatlabz.revprac.domain.matches.MatchEvent;
 import io.github.xreatlabz.revprac.domain.matches.MatchId;
+import io.github.xreatlabz.revprac.domain.matches.MatchOrigin;
 import io.github.xreatlabz.revprac.domain.matches.MatchOutcome;
 import io.github.xreatlabz.revprac.domain.matches.MatchParticipants;
 import io.github.xreatlabz.revprac.domain.matches.MatchRuleset;
@@ -22,8 +23,10 @@ import io.github.xreatlabz.revprac.domain.matches.MatchState;
 import io.github.xreatlabz.revprac.domain.players.PlayerContext;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
 import io.github.xreatlabz.revprac.domain.players.TransitionReason;
+import io.github.xreatlabz.revprac.domain.queues.QueueMode;
 import io.github.xreatlabz.revprac.ports.matches.MatchPlayerPort;
 import io.github.xreatlabz.revprac.ports.matches.MatchRepository;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -42,6 +45,8 @@ public final class MatchLifecycleService {
     private final KitRegistryService kitRegistryService;
     private final MatchPlayerPort matchPlayerPort;
     private final MatchRuleset matchRuleset;
+    private final MatchSettlementService matchSettlementService;
+    private final Clock clock;
     private final MatchEventPublisher eventPublisher;
     private final AtomicBoolean intakeClosed = new AtomicBoolean(false);
     private final ReentrantLock mutationLock = new ReentrantLock();
@@ -54,12 +59,57 @@ public final class MatchLifecycleService {
             MatchPlayerPort matchPlayerPort,
             MatchRuleset matchRuleset,
             Consumer<MatchEvent> eventSink) {
+        this(
+                matchRepository,
+                playerSessionService,
+                arenaRegistryService,
+                kitRegistryService,
+                matchPlayerPort,
+                matchRuleset,
+                MatchSettlementService.noOp(),
+                Clock.systemUTC(),
+                eventSink);
+    }
+
+    public MatchLifecycleService(
+            MatchRepository matchRepository,
+            PlayerSessionService playerSessionService,
+            ArenaRegistryService arenaRegistryService,
+            KitRegistryService kitRegistryService,
+            MatchPlayerPort matchPlayerPort,
+            MatchRuleset matchRuleset,
+            MatchSettlementService matchSettlementService,
+            Consumer<MatchEvent> eventSink) {
+        this(
+                matchRepository,
+                playerSessionService,
+                arenaRegistryService,
+                kitRegistryService,
+                matchPlayerPort,
+                matchRuleset,
+                matchSettlementService,
+                Clock.systemUTC(),
+                eventSink);
+    }
+
+    public MatchLifecycleService(
+            MatchRepository matchRepository,
+            PlayerSessionService playerSessionService,
+            ArenaRegistryService arenaRegistryService,
+            KitRegistryService kitRegistryService,
+            MatchPlayerPort matchPlayerPort,
+            MatchRuleset matchRuleset,
+            MatchSettlementService matchSettlementService,
+            Clock clock,
+            Consumer<MatchEvent> eventSink) {
         this.matchRepository = Objects.requireNonNull(matchRepository, "matchRepository");
         this.playerSessionService = Objects.requireNonNull(playerSessionService, "playerSessionService");
         this.arenaRegistryService = Objects.requireNonNull(arenaRegistryService, "arenaRegistryService");
         this.kitRegistryService = Objects.requireNonNull(kitRegistryService, "kitRegistryService");
         this.matchPlayerPort = Objects.requireNonNull(matchPlayerPort, "matchPlayerPort");
         this.matchRuleset = Objects.requireNonNull(matchRuleset, "matchRuleset");
+        this.matchSettlementService = Objects.requireNonNull(matchSettlementService, "matchSettlementService");
+        this.clock = Objects.requireNonNull(clock, "clock");
         this.eventPublisher = new MatchEventPublisher(Objects.requireNonNull(eventSink, "eventSink"));
     }
 
@@ -69,9 +119,14 @@ public final class MatchLifecycleService {
     }
 
     public Match startQueuedMatch(PlayerId firstPlayerId, PlayerId secondPlayerId, KitId kitId) {
+        return startQueuedMatch(firstPlayerId, secondPlayerId, kitId, QueueMode.UNRANKED);
+    }
+
+    public Match startQueuedMatch(PlayerId firstPlayerId, PlayerId secondPlayerId, KitId kitId, QueueMode queueMode) {
         Objects.requireNonNull(firstPlayerId, "firstPlayerId");
         Objects.requireNonNull(secondPlayerId, "secondPlayerId");
         Objects.requireNonNull(kitId, "kitId");
+        Objects.requireNonNull(queueMode, "queueMode");
         mutationLock.lock();
         try {
             ensureIntakeOpen();
@@ -86,6 +141,7 @@ public final class MatchLifecycleService {
                     matchId,
                     firstPlayerId,
                     secondPlayerId,
+                    originForQueueMode(queueMode),
                     reservedArena.definition(),
                     kitDefinition,
                     reservedArena.reservation(),
@@ -112,6 +168,7 @@ public final class MatchLifecycleService {
                     matchId,
                     duelRequest.requesterId(),
                     duelRequest.targetId(),
+                    MatchOrigin.DIRECT_DUEL,
                     arenaDefinition,
                     reserveKit(duelRequest.kitId()),
                     reserveArena(arenaDefinition, matchId),
@@ -183,7 +240,7 @@ public final class MatchLifecycleService {
                     continue;
                 }
                 if (match.state() == MatchState.ACTIVE) {
-                    Match next = match.tickActive();
+                    Match next = match.tickActive(clock.instant());
                     if (next.state() == MatchState.COMPLETED) {
                         completeMatchLocked(next);
                     } else {
@@ -203,7 +260,7 @@ public final class MatchLifecycleService {
             Match match = requireMatchForPlayer(deadPlayerId);
             PlayerId winnerId = match.participants().opponentOf(deadPlayerId)
                     .orElseThrow(() -> new IllegalStateException("opponent not found"));
-            completeMatchLocked(match.complete(MatchOutcome.win(winnerId, deadPlayerId)));
+            completeMatchLocked(match.complete(MatchOutcome.win(winnerId, deadPlayerId), clock.instant()));
         } finally {
             mutationLock.unlock();
         }
@@ -216,7 +273,7 @@ public final class MatchLifecycleService {
             Match match = requireMatchForPlayer(playerId);
             PlayerId winnerId = match.participants().opponentOf(playerId)
                     .orElseThrow(() -> new IllegalStateException("opponent not found"));
-            completeMatchLocked(match.complete(MatchOutcome.forfeit(winnerId, playerId)));
+            completeMatchLocked(match.complete(MatchOutcome.forfeit(winnerId, playerId), clock.instant()));
         } finally {
             mutationLock.unlock();
         }
@@ -230,7 +287,7 @@ public final class MatchLifecycleService {
                 Match match = requireMatchForPlayer(playerId);
                 PlayerId winnerId = match.participants().opponentOf(playerId)
                         .orElseThrow(() -> new IllegalStateException("opponent not found"));
-                completeMatchLocked(match.complete(MatchOutcome.forfeit(winnerId, playerId)));
+                completeMatchLocked(match.complete(MatchOutcome.forfeit(winnerId, playerId), clock.instant()));
                 return;
             }
 
@@ -252,7 +309,7 @@ public final class MatchLifecycleService {
         try {
             Match match = matchRepository.find(matchId)
                     .orElseThrow(() -> new IllegalStateException("unknown match: " + matchId.value()));
-            tearDownLocked(match);
+            drainCompletedMatchLocked(match);
         } finally {
             mutationLock.unlock();
         }
@@ -266,12 +323,12 @@ public final class MatchLifecycleService {
             for (Match match : List.copyOf(matchRepository.findAll())) {
                 try {
                     if (match.state() == MatchState.COMPLETED) {
-                        tearDownLocked(match);
+                        drainCompletedMatchLocked(match);
                     } else {
-                        completeMatchLocked(match.complete(MatchOutcome.shutdown()));
+                        completeMatchLocked(match.complete(MatchOutcome.shutdown(), clock.instant()));
                     }
                 } catch (RuntimeException exception) {
-                    RuntimeException finalFailure = retryRetainedCompletedTeardown(match.id(), exception);
+                    RuntimeException finalFailure = retryRetainedCompletedDrain(match.id(), exception);
                     if (finalFailure != null) {
                         failure = mergeFailures(failure, finalFailure);
                     }
@@ -298,6 +355,7 @@ public final class MatchLifecycleService {
             MatchId matchId,
             PlayerId firstPlayerId,
             PlayerId secondPlayerId,
+            MatchOrigin origin,
             ArenaDefinition arenaDefinition,
             KitDefinition kitDefinition,
             ArenaReservation reservation,
@@ -307,6 +365,7 @@ public final class MatchLifecycleService {
                 new MatchParticipants(firstPlayerId, secondPlayerId),
                 arenaDefinition.id(),
                 kitDefinition.id(),
+                origin,
                 reservation.reservationId(),
                 matchRuleset);
 
@@ -374,7 +433,15 @@ public final class MatchLifecycleService {
         matchRepository.save(completedMatch);
         emit(sequence -> new MatchEvent.MatchCompleted(
                 sequence, completedMatch.id(), completedMatch.outcome().orElseThrow()));
-        tearDownLocked(completedMatch);
+        drainCompletedMatchLocked(completedMatch);
+    }
+
+    private void drainCompletedMatchLocked(Match match) {
+        if (match.state() != MatchState.COMPLETED) {
+            throw new IllegalStateException("match must be completed before teardown");
+        }
+        matchSettlementService.settle(match);
+        tearDownLocked(match);
     }
 
     private void tearDownLocked(Match match) {
@@ -435,7 +502,7 @@ public final class MatchLifecycleService {
         return match;
     }
 
-    private RuntimeException retryRetainedCompletedTeardown(MatchId matchId, RuntimeException initialFailure) {
+    private RuntimeException retryRetainedCompletedDrain(MatchId matchId, RuntimeException initialFailure) {
         Match retainedMatch = matchRepository.find(matchId)
                 .filter(match -> match.state() == MatchState.COMPLETED)
                 .orElse(null);
@@ -444,7 +511,7 @@ public final class MatchLifecycleService {
         }
 
         try {
-            tearDownLocked(retainedMatch);
+            drainCompletedMatchLocked(retainedMatch);
             return null;
         } catch (RuntimeException retryFailure) {
             initialFailure.addSuppressed(retryFailure);
@@ -508,6 +575,13 @@ public final class MatchLifecycleService {
         }
         current.addSuppressed(next);
         return current;
+    }
+
+    private static MatchOrigin originForQueueMode(QueueMode queueMode) {
+        return switch (queueMode) {
+            case RANKED -> MatchOrigin.QUEUE_RANKED;
+            case UNRANKED -> MatchOrigin.QUEUE_UNRANKED;
+        };
     }
 
     private record ReservedArena(ArenaDefinition definition, ArenaReservation reservation) {

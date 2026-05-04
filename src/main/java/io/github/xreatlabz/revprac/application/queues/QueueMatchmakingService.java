@@ -118,7 +118,8 @@ public final class QueueMatchmakingService {
             matchLifecycleService.startQueuedMatch(
                     assignment.first().playerId(),
                     assignment.second().playerId(),
-                    assignment.kitId());
+                    assignment.kitId(),
+                    assignment.mode());
             queueTicketRepository.delete(assignment.first().id());
             queueTicketRepository.delete(assignment.second().id());
         } catch (MatchLifecycleService.ArenaUnavailableException exception) {

@@ -4,6 +4,7 @@ import io.github.xreatlabz.revprac.domain.arenas.ArenaId;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaReservationId;
 import io.github.xreatlabz.revprac.domain.kits.KitId;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
+import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Optional;
@@ -14,24 +15,28 @@ public record Match(
         MatchParticipants participants,
         ArenaId arenaId,
         KitId kitId,
+        MatchOrigin origin,
         ArenaReservationId arenaReservationId,
         MatchRuleset ruleset,
         MatchState state,
         int countdownTicksRemaining,
         int activeTicksElapsed,
         Set<PlayerId> spectators,
-        Optional<MatchOutcome> outcome) {
+        Optional<MatchOutcome> outcome,
+        Optional<Instant> completedAt) {
 
     public Match {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(participants, "participants");
         Objects.requireNonNull(arenaId, "arenaId");
         Objects.requireNonNull(kitId, "kitId");
+        Objects.requireNonNull(origin, "origin");
         Objects.requireNonNull(arenaReservationId, "arenaReservationId");
         Objects.requireNonNull(ruleset, "ruleset");
         Objects.requireNonNull(state, "state");
         Objects.requireNonNull(spectators, "spectators");
-        Objects.requireNonNull(outcome, "outcome");
+        outcome = normalizeOptional(outcome, "outcome");
+        completedAt = normalizeOptional(completedAt, "completedAt");
 
         if (countdownTicksRemaining < 0) {
             throw new IllegalArgumentException("countdownTicksRemaining must not be negative");
@@ -59,6 +64,9 @@ public record Match(
                 if (outcome.isPresent()) {
                     throw new IllegalArgumentException("countdown matches must not have an outcome");
                 }
+                if (completedAt.isPresent()) {
+                    throw new IllegalArgumentException("countdown matches must not have a completion timestamp");
+                }
             }
             case ACTIVE -> {
                 if (countdownTicksRemaining != 0) {
@@ -70,10 +78,16 @@ public record Match(
                 if (outcome.isPresent()) {
                     throw new IllegalArgumentException("active matches must not have an outcome");
                 }
+                if (completedAt.isPresent()) {
+                    throw new IllegalArgumentException("active matches must not have a completion timestamp");
+                }
             }
             case COMPLETED -> {
                 if (outcome.isEmpty()) {
                     throw new IllegalArgumentException("completed matches must have an outcome");
+                }
+                if (completedAt.isEmpty()) {
+                    throw new IllegalArgumentException("completed matches must have a completion timestamp");
                 }
                 validateOutcomeParticipants(participants, outcome.get());
             }
@@ -87,17 +101,30 @@ public record Match(
             KitId kitId,
             ArenaReservationId arenaReservationId,
             MatchRuleset ruleset) {
+        return create(id, participants, arenaId, kitId, MatchOrigin.DIRECT_DUEL, arenaReservationId, ruleset);
+    }
+
+    public static Match create(
+            MatchId id,
+            MatchParticipants participants,
+            ArenaId arenaId,
+            KitId kitId,
+            MatchOrigin origin,
+            ArenaReservationId arenaReservationId,
+            MatchRuleset ruleset) {
         return new Match(
                 id,
                 participants,
                 arenaId,
                 kitId,
+                origin,
                 arenaReservationId,
                 ruleset,
                 MatchState.COUNTDOWN,
                 ruleset.countdownTicks(),
                 0,
                 Set.of(),
+                Optional.empty(),
                 Optional.empty());
     }
 
@@ -109,12 +136,14 @@ public record Match(
                     participants,
                     arenaId,
                     kitId,
+                    origin,
                     arenaReservationId,
                     ruleset,
                     MatchState.ACTIVE,
                     0,
                     0,
                     spectators,
+                    Optional.empty(),
                     Optional.empty());
         }
         return new Match(
@@ -122,17 +151,20 @@ public record Match(
                 participants,
                 arenaId,
                 kitId,
+                origin,
                 arenaReservationId,
                 ruleset,
                 MatchState.COUNTDOWN,
                 countdownTicksRemaining - 1,
                 0,
                 spectators,
+                Optional.empty(),
                 Optional.empty());
     }
 
-    public Match tickActive() {
+    public Match tickActive(Instant completedAt) {
         requireState(MatchState.ACTIVE, "active");
+        Objects.requireNonNull(completedAt, "completedAt");
         int nextActiveTicksElapsed = activeTicksElapsed + 1;
         if (nextActiveTicksElapsed >= ruleset.maxDurationTicks()) {
             return new Match(
@@ -140,30 +172,35 @@ public record Match(
                     participants,
                     arenaId,
                     kitId,
+                    origin,
                     arenaReservationId,
                     ruleset,
                     MatchState.COMPLETED,
                     countdownTicksRemaining,
                     nextActiveTicksElapsed,
                     spectators,
-                    Optional.of(MatchOutcome.timeout()));
+                    Optional.of(MatchOutcome.timeout()),
+                    Optional.of(completedAt));
         }
         return new Match(
                 id,
                 participants,
                 arenaId,
                 kitId,
+                origin,
                 arenaReservationId,
                 ruleset,
                 MatchState.ACTIVE,
                 countdownTicksRemaining,
                 nextActiveTicksElapsed,
                 spectators,
+                Optional.empty(),
                 Optional.empty());
     }
 
-    public Match complete(MatchOutcome matchOutcome) {
+    public Match complete(MatchOutcome matchOutcome, Instant completedAt) {
         Objects.requireNonNull(matchOutcome, "matchOutcome");
+        Objects.requireNonNull(completedAt, "completedAt");
         if (state == MatchState.COMPLETED) {
             throw new IllegalStateException("match is already completed");
         }
@@ -172,13 +209,15 @@ public record Match(
                 participants,
                 arenaId,
                 kitId,
+                origin,
                 arenaReservationId,
                 ruleset,
                 MatchState.COMPLETED,
                 countdownTicksRemaining,
                 activeTicksElapsed,
                 spectators,
-                Optional.of(matchOutcome));
+                Optional.of(matchOutcome),
+                Optional.of(completedAt));
     }
 
     public Match addSpectator(PlayerId spectatorId) {
@@ -200,13 +239,15 @@ public record Match(
                 participants,
                 arenaId,
                 kitId,
+                origin,
                 arenaReservationId,
                 ruleset,
                 state,
                 countdownTicksRemaining,
                 activeTicksElapsed,
                 nextSpectators,
-                outcome);
+                outcome,
+                completedAt);
     }
 
     public Match removeSpectator(PlayerId spectatorId) {
@@ -222,13 +263,21 @@ public record Match(
                 participants,
                 arenaId,
                 kitId,
+                origin,
                 arenaReservationId,
                 ruleset,
                 state,
                 countdownTicksRemaining,
                 activeTicksElapsed,
                 nextSpectators,
-                outcome);
+                outcome,
+                completedAt);
+    }
+
+    private static <T> Optional<T> normalizeOptional(Optional<T> value, String fieldName) {
+        Objects.requireNonNull(value, fieldName);
+        value.ifPresent(item -> Objects.requireNonNull(item, fieldName));
+        return value;
     }
 
     private static void validateOutcomeParticipants(MatchParticipants participants, MatchOutcome matchOutcome) {

@@ -34,6 +34,7 @@ import io.github.xreatlabz.revprac.application.config.RevPracConfig;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
 import io.github.xreatlabz.revprac.application.matches.DuelRequestService;
 import io.github.xreatlabz.revprac.application.matches.MatchLifecycleService;
+import io.github.xreatlabz.revprac.application.matches.MatchSettlementService;
 import io.github.xreatlabz.revprac.application.queues.PlayerAvailabilityService;
 import io.github.xreatlabz.revprac.application.queues.QueueMatchmakingService;
 import io.github.xreatlabz.revprac.application.queues.QueueService;
@@ -153,6 +154,8 @@ public final class RevPracBootstrap {
                     config.matches().countdownTicks(),
                     config.matches().maxDurationTicks(),
                     config.matches().spectatorsEnabled());
+            MatchSettlementService matchSettlementService =
+                    new MatchSettlementService(storageRuntime.matchSettlementRepository());
             PaperMatchPlayerAdapter matchPlayerAdapter = new PaperMatchPlayerAdapter(plugin.getServer(), kitLoadoutAdapter);
             Consumer<MatchEvent> eventSink = event -> {
             };
@@ -163,6 +166,8 @@ public final class RevPracBootstrap {
                     kitRegistryService,
                     matchPlayerAdapter,
                     matchRuleset,
+                    matchSettlementService,
+                    Clock.systemUTC(),
                     eventSink);
             DuelRequestService duelRequestService = new DuelRequestService(
                     duelRequestRepository,

@@ -2,7 +2,6 @@ package io.github.xreatlabz.revprac.adapters.storage;
 
 import io.github.xreatlabz.revprac.domain.matches.Match;
 import io.github.xreatlabz.revprac.domain.matches.MatchId;
-import io.github.xreatlabz.revprac.domain.matches.MatchState;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
 import io.github.xreatlabz.revprac.ports.matches.MatchRepository;
 import java.util.Collection;
@@ -88,13 +87,11 @@ public final class InMemoryMatchRepository implements MatchRepository {
 
     private boolean playerOccupied(PlayerId playerId) {
         return matches.values().stream()
-                .filter(match -> match.state() != MatchState.COMPLETED)
                 .anyMatch(match -> match.participants().contains(playerId));
     }
 
     private boolean spectatorOccupied(PlayerId playerId) {
         return matches.values().stream()
-                .filter(match -> match.state() != MatchState.COMPLETED)
                 .anyMatch(match -> match.spectators().contains(playerId));
     }
 }
