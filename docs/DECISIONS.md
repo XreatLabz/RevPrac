@@ -121,3 +121,12 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: Make settlement idempotent by inserting `match_history` first and applying stat deltas only when that insert creates a new row.
 - Decision: Record `MatchOrigin` for direct duel, ranked queue, and unranked queue history, while leaving rating progression, seasons, PostgreSQL, import/export, rematch, post-match summaries, and player-facing stat commands deferred.
 - Rationale: Completed match data must survive restart without making active gameplay state durable yet, and teardown retry paths must not double-count stats.
+
+## 2026-05-04: Phase 6C Ranked Progression And Self Stats
+
+- Decision: Apply ranked rating progression only for completed ranked queue matches with `WIN` or `FORFEIT` outcomes. Direct duel, unranked queue, timeout, and shutdown completions do not change ratings.
+- Decision: Use a simple Elo progression with `K = 32` and a floor of `1` for ranked ratings. Rating updates remain idempotent because settlement only applies them when the `match_history` insert creates a new row.
+- Decision: Expose `/stats` as a self-only command with `revprac.stats` defaulting to `true`, and support `summary <kit>` plus `history [page]` over persisted per-kit stats, ranked-kit ratings, and recent match history.
+- Decision: Cap `/stats history [page]` to a stable maximum page of `100`, and render missing opponent profile names as `Unknown player` instead of exposing raw UUIDs in player-facing history output.
+- Decision: Keep PostgreSQL, seasons, import/export, rematch, post-match summaries, offline/cross-player lookup, active match recovery, active queue recovery, and season partitioning deferred.
+- Rationale: Phase 6C adds the competitive progression and self-service query slice without making active gameplay state durable yet or broadening the storage surface prematurely.

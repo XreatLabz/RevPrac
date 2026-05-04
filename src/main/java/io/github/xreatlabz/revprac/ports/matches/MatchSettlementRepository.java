@@ -6,6 +6,7 @@ import io.github.xreatlabz.revprac.domain.matches.MatchId;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
 import io.github.xreatlabz.revprac.domain.stats.MatchSettlement;
 import io.github.xreatlabz.revprac.domain.stats.PlayerKitStats;
+import java.util.List;
 import java.util.Optional;
 
 public interface MatchSettlementRepository {
@@ -15,4 +16,8 @@ public interface MatchSettlementRepository {
     Optional<MatchHistoryEntry> findHistory(MatchId matchId);
 
     Optional<PlayerKitStats> findStats(PlayerId playerId, KitId kitId);
+
+    default List<MatchHistoryEntry> findRecentHistory(PlayerId playerId, int limit, int offset) {
+        throw new UnsupportedOperationException("recent history is not implemented");
+    }
 }

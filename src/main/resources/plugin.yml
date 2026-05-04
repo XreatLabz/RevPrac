@@ -25,6 +25,11 @@ commands:
     usage: /queue join <ranked|unranked> <kit>|leave|status
     permission: revprac.queue
     permission-message: You do not have permission to use this command.
+  stats:
+    description: RevPrac self-facing stats and match history commands.
+    usage: /stats summary <kit>|history [page]
+    permission: revprac.stats
+    permission-message: You do not have permission to use this command.
 permissions:
   revprac.admin:
     description: Allows RevPrac arena and kit setup commands.
@@ -34,4 +39,7 @@ permissions:
     default: true
   revprac.queue:
     description: Allows RevPrac queue commands.
+    default: true
+  revprac.stats:
+    description: Allows RevPrac stats commands.
     default: true

@@ -35,6 +35,7 @@ RevPrac currently has a minimal Paper plugin scaffold plus early practice regist
 - Queue system: `domain.queues` owns queue modes, keys, tickets, ticket states, and matchmaking-window compatibility; `application.queues.QueueService` owns `/queue` join/leave/status, queue availability gating, queue session transitions, ranked base-rating seeding, and shutdown drainage; `application.queues.QueueMatchmakingService` owns deterministic sweeps and queued match handoff; `adapters.storage` owns the in-memory queue ticket repository; `adapters.paper.commands.RevPracQueueCommand` owns `/queue` parsing; `adapters.paper.queues` owns the synchronous ticker and quit listener.
 - Queue config: `application.config.QueueConfig` owns `queues.matchmaking-period-ticks`, `queues.ranked-base-rating`, `queues.ticks-per-second`, and `queues.ranked-windows`.
 - Storage runtime: `application.config.StorageConfig` owns `storage.backend`, `storage.sqlite-path`, and `storage.pool-maximum-size`; `adapters.storage.jdbc` owns the HikariCP datasource, Flyway migration, JDBC-backed player profile and player rating repositories, and the SQLite match settlement repository; `src/main/resources/plugin.yml` declares the runtime libraries; `BootstrapRuntime` shuts storage down after queue, match, and player teardown, while failed post-storage bootstrap closes storage before rethrowing.
+- Rating and stats surface: `application.ratings` owns ranked settlement progression; `application.players.PlayerRecordQueryService` owns self-facing summary/history reads over persisted stats and ratings; `adapters.paper.commands.RevPracStatsCommand` owns `/stats` parsing through the Paper command layer.
 - Command surface: `adapters.paper.commands.RevPracAdminCommand` owns `/revprac arena create <id> <radius>` and `/revprac kit save <id>` parsing, permission checks, player-only checks, and YAML-first persistence before runtime mutation; `adapters.paper.commands.RevPracDuelCommand` owns `/duel <player> <arena> <kit>`, explicit `/duel request <player> <arena> <kit>`, accept, deny/decline, cancel, spectate, and forfeit parsing through the Paper command layer.
 - Match config: `application.config.MatchConfig` owns `matches.duel-request-expiry-seconds`, `matches.countdown-ticks`, `matches.max-duration-ticks`, and `matches.spectators-enabled` with documented defaults from `config.yml`.
 - Tests: JUnit Jupiter and MockBukkit for plugin load/enable plus player-session adapter and lifecycle coverage.
@@ -46,6 +47,8 @@ RevPrac currently has a minimal Paper plugin scaffold plus early practice regist
 - `kits`: kit metadata, inventories, armor, effects, rules, and serialization.
 - `queues`: queue registration, matchmaking policy, ranked and unranked flow, active-ticket lifecycle, and leave/rejoin behavior.
 - `players`: player profiles, session state, cooldowns, statistics, ratings, and persistence-facing models.
+- `ratings`: ranked progression rules and rating persistence behavior.
+- `stats`: per-player summary and history query models.
 - `commands`: player, staff, and admin command surfaces with permission checks.
 - `config-storage`: config loading, validation, migrations, and persistence adapters.
 - `integrations`: optional hooks for scoreboards, placeholders, tab, combat logs, parties, rematch, post-match summaries, and external services.
@@ -72,13 +75,15 @@ RevPrac currently has a minimal Paper plugin scaffold plus early practice regist
 - Storage bootstrap is fail-closed: bad config, invalid SQLite paths, Flyway migration failures, or post-storage bootstrap failures prevent the runtime from exposing repositories and close any opened storage runtime.
 - JDBC-backed player profiles and ratings are durable Phase 6A records; `first_seen_at` is immutable after insert, and profile touches keep `last_seen_at` monotonic under clock rollback.
 - Phase 6B records completed match history in `match_history` and aggregate per-player per-kit counters in `player_kit_stats`. Match settlement is idempotent by `match_id`: if history already exists, stat counters are not incremented again.
+- Phase 6C adds deterministic ranked progression for completed ranked queue matches only: `WIN` and `FORFEIT` change ratings, direct duel/unranked queue/timeout/shutdown outcomes do not, the formula uses simple Elo with `K = 32`, and ratings floor at `1`. Ranked progression still applies only after the `match_history` insert proves the settlement is new.
 - `MatchLifecycleService` captures the completion instant on the completed match and settles it before teardown deletes it. If settlement fails, the completed match remains retained and players stay in their managed match context for operator retry through the same completed-match drain path.
 - `MatchOrigin` records whether history came from a direct duel, ranked queue, or unranked queue. Active match state still remains in memory and only the completed history/stat result is durable in this slice.
-- Seasons, PostgreSQL, import/export, rating progression updates, rematch, post-match summaries, and player-facing stat commands remain future slices.
+- `PlayerRecordQueryService` and `/stats` stay self-only, with `revprac.stats` defaulting to `true`. The command exposes summary and recent-history reads over persisted per-kit stats, ranked-kit ratings, and recent match history.
+- Seasons, PostgreSQL, import/export, rematch, post-match summaries, offline/cross-player lookup, active match recovery, active queue recovery, and season partitioning remain future slices.
 - Ranked queue eligibility is gated by `KitRules.ranked`, but ranked-capable kits can still be used in unranked queues.
 - Direct duel and queue flows share `PlayerAvailabilityService`, so active duel, match, or queue players cannot start a conflicting flow.
 - The queue ticker is synchronous and uses the current server tick when it sweeps matchmaking.
 
 ## Next Architecture Step
 
-The next code should add the remaining Phase 6 persistence slices: seasons, PostgreSQL, import/export, and competitive progression on top of the existing duel, match, queue, Phase 6A durable profile/rating storage, and Phase 6B match history/stat settlement. Keep match and queue rules testable without a live server, keep Paper adapters thin, and preserve in-memory active-match and queue-ticket assumptions until those later persistence slices are introduced.
+The next code should add the remaining persistence slices: seasons, PostgreSQL, import/export, rematch, post-match summaries, offline/cross-player lookup, active match recovery, active queue recovery, and season partitioning. Keep match and queue rules testable without a live server, keep Paper adapters thin, and preserve in-memory active-match and queue-ticket assumptions until those later persistence slices are introduced.

@@ -7,6 +7,7 @@ import io.github.xreatlabz.revprac.adapters.paper.arenas.PaperArenaResetAdapter;
 import io.github.xreatlabz.revprac.adapters.paper.commands.RevPracAdminCommand;
 import io.github.xreatlabz.revprac.adapters.paper.commands.RevPracDuelCommand;
 import io.github.xreatlabz.revprac.adapters.paper.commands.RevPracQueueCommand;
+import io.github.xreatlabz.revprac.adapters.paper.commands.RevPracStatsCommand;
 import io.github.xreatlabz.revprac.adapters.paper.kits.PaperKitLoadoutAdapter;
 import io.github.xreatlabz.revprac.adapters.paper.kits.PaperKitRegistryFiles;
 import io.github.xreatlabz.revprac.adapters.paper.matches.PaperMatchLifecycleListener;
@@ -27,6 +28,7 @@ import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionReposit
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueTicketRepository;
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
+import io.github.xreatlabz.revprac.application.players.PlayerRecordQueryService;
 import io.github.xreatlabz.revprac.application.players.PlayerProfileService;
 import io.github.xreatlabz.revprac.application.config.LoadValidatedConfigService;
 import io.github.xreatlabz.revprac.application.config.QueueConfig;
@@ -155,7 +157,16 @@ public final class RevPracBootstrap {
                     config.matches().maxDurationTicks(),
                     config.matches().spectatorsEnabled());
             MatchSettlementService matchSettlementService =
-                    new MatchSettlementService(storageRuntime.matchSettlementRepository());
+                    new MatchSettlementService(
+                            storageRuntime.matchSettlementRepository(),
+                            ratingService,
+                            queueConfig.rankedBaseRating());
+            PlayerRecordQueryService playerRecordQueryService = new PlayerRecordQueryService(
+                    kitRegistryService,
+                    storageRuntime.matchSettlementRepository(),
+                    storageRuntime.playerRatingRepository(),
+                    storageRuntime.playerProfileRepository(),
+                    queueConfig);
             PaperMatchPlayerAdapter matchPlayerAdapter = new PaperMatchPlayerAdapter(plugin.getServer(), kitLoadoutAdapter);
             Consumer<MatchEvent> eventSink = event -> {
             };
@@ -228,6 +239,8 @@ public final class RevPracBootstrap {
                     .setExecutor(new RevPracDuelCommand(plugin.getServer(), duelRequestService, matchLifecycleService));
             Objects.requireNonNull(plugin.getCommand("queue"), "queue command must be declared in plugin.yml")
                     .setExecutor(new RevPracQueueCommand(queueService, paperQueueTicker::currentTick));
+            Objects.requireNonNull(plugin.getCommand("stats"), "stats command must be declared in plugin.yml")
+                    .setExecutor(new RevPracStatsCommand(playerRecordQueryService));
             paperQueueTicker.start();
             paperMatchTicker.start();
             if (config.diagnostics().verboseLifecycleLogs()) {

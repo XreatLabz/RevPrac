@@ -38,7 +38,7 @@ RevPrac currently has:
 
 Current repo shape is intentionally small:
 
-- arena and kit registry groundwork exists; the direct duel, queue matchmaking, and match engine are implemented; Phase 6A durable player profile and rating storage is implemented; match-history settlement, stats, seasons, PostgreSQL, and import/export remain planned
+- arena and kit registry groundwork exists; the direct duel, queue matchmaking, and match engine are implemented; Phase 6A durable player profile and rating storage is implemented; Phase 6B durable match history and per-player per-kit stats are implemented; Phase 6C ranked progression and self-facing `/stats` queries are implemented; seasons, PostgreSQL, import/export, rematch, post-match summaries, offline/cross-player lookup, active match recovery, active queue recovery, and season partitioning remain planned
 - no Gradle subprojects yet
 - no public plugin API surface yet
 
@@ -318,11 +318,11 @@ Validation:
 
 ### Phase 6: Persistence, Ratings, and Migrations
 
-Status: Implemented for Phase 6A and Phase 6B
+Status: Implemented for Phase 6A, Phase 6B, and Phase 6C
 
 Goal:
 
-- introduce the first durable persistence slices for RevPrac: storage config, SQLite-backed migrations, durable player profiles, durable queue rating seeds, completed match history, and basic per-player per-kit stats
+- introduce the first durable persistence slices for RevPrac: storage config, SQLite-backed migrations, durable player profiles, durable queue rating seeds, completed match history, basic per-player per-kit stats, ranked rating progression, and a self-facing stats query surface
 
 Implemented scope:
 
@@ -332,21 +332,26 @@ Implemented scope:
 - `JdbcStorageRuntime` exposes JDBC-backed player profile, player rating, and match settlement repositories
 - `BootstrapRuntime` closes storage after queue, match, and player teardown
 - the durable data slices cover player profiles, queue rating seeds, completed match history, and aggregate player-kit stats
+- ranked settlement progression is deterministic and limited to completed ranked queue matches with `WIN` or `FORFEIT`; direct duel, unranked queue, timeout, and shutdown completions do not change ratings
+- ranked progression uses simple Elo with `K = 32`, applies a floor of `1`, and only writes rating updates when the `match_history` insert creates a new row
+- `/stats` is self-only, gated by `revprac.stats` with a default of `true`, and exposes summary and recent-history views backed by persisted per-kit stats plus ranked-kit ratings
 - `MatchLifecycleService` captures a completion instant, settles completed matches before teardown, and preserves that completion time across retry; settlement failure retains the completed match and prevents teardown from returning players early
 - match history records direct duel, ranked queue, and unranked queue origins through `MatchOrigin`
 - active queues, active matches, duel requests, player sessions, and pending restorations remain in memory
 
 Phase boundary:
 
-- seasons, PostgreSQL, import/export, rating progression updates, post-match summaries, rematch, and player-facing stat commands are deferred to later slices
+- seasons, PostgreSQL, import/export, rematch, post-match summaries, offline/cross-player lookup, active match recovery, active queue recovery, and season partitioning are deferred to later slices
 - storage config is SQLite-only for now; `storage.backend` is validated but does not open a second backend yet
 - migrations must fail closed during bootstrap; the runtime should not start with a broken storage layer
-- durable persistence here does not include active match recovery, active queue recovery, season partitioning, or command/query surfaces for match history
+- durable persistence here does not include any public cross-player lookup surface or season partitioning
 
 Exit criteria:
 
 - durable player profiles and ratings survive restart and reload cycles
 - completed match history and aggregate player-kit stats survive restart and duplicate settlement retries without double-counting
+- ranked queue settlements update ratings exactly once and only for decisive ranked outcomes
+- `/stats` exposes self-only summary/history reads from persisted data without requiring a live server state lookup
 - migrations apply cleanly from empty and upgraded states
 - storage adapters remain isolated behind ports
 - runtime shutdown closes storage after gameplay teardown has completed
@@ -356,6 +361,7 @@ Validation:
 ```bash
 ./gradlew test --tests '*LoadValidatedConfigServiceContractTest' --tests '*MatchHistoryEntryTest' --tests '*PlayerKitStatsTest' --tests '*MatchSettlementServiceTest'
 ./gradlew test --tests '*MatchLifecycleServiceTest' --tests '*PlayerAvailabilityServiceTest'
+./gradlew test --tests '*RatingServiceTest' --tests '*PlayerRecordQueryServiceTest' --tests '*RevPracStatsCommandTest'
 ./gradlew test --tests '*JdbcStorageFactoryTest' --tests '*RevPracPluginPhase6Test'
 ./gradlew spotlessCheck test jacocoTestReport jar
 ./scripts/smoke-run-paper.sh
