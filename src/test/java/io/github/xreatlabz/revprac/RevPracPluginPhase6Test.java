@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.bukkit.command.PluginCommand;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -49,12 +50,13 @@ final class RevPracPluginPhase6Test {
     }
 
     @Test
-    void pluginYmlDeclaresLibrariesAndEnableWiresJdbcStorageIntoQueueRuntime() throws Exception {
+    void pluginYmlDeclaresLibrariesAndStatsCommandAndEnableWiresJdbcStorageIntoQueueRuntime() throws Exception {
         MockBukkit.mock();
 
         RevPracPlugin plugin = MockBukkit.load(RevPracPlugin.class);
         BootstrapRuntime runtime = runtime(plugin);
         YamlConfiguration pluginYaml = loadPluginYaml();
+        PluginCommand statsCommand = MockBukkit.getMock().getPluginCommand("stats");
 
         assertEquals(
                 List.of(
@@ -62,6 +64,11 @@ final class RevPracPluginPhase6Test {
                         "org.flywaydb:flyway-core:12.5.0",
                         "org.xerial:sqlite-jdbc:3.53.0.0"),
                 pluginYaml.getStringList("libraries"));
+        assertEquals("revprac.stats", pluginYaml.getString("commands.stats.permission"));
+        assertTrue(pluginYaml.getBoolean("permissions.revprac.stats.default"));
+        assertNotNull(statsCommand, "plugin.yml should declare /stats");
+        assertEquals("revprac.stats", statsCommand.getPermission());
+        assertNotNull(statsCommand.getExecutor(), "Bootstrap should register the /stats executor");
         assertTrue(Files.isRegularFile(plugin.getDataFolder().toPath().resolve("data/revprac.db")));
         assertNotNull(field(runtime, "storageRuntime"));
         assertInstanceOf(InMemoryQueueTicketRepository.class, field(runtime.queueService(), "queueTicketRepository"));

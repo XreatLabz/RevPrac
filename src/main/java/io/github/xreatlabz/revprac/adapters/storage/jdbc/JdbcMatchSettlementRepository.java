@@ -7,6 +7,7 @@ import io.github.xreatlabz.revprac.domain.matches.MatchHistoryEntry;
 import io.github.xreatlabz.revprac.domain.matches.MatchId;
 import io.github.xreatlabz.revprac.domain.matches.MatchOrigin;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
+import io.github.xreatlabz.revprac.domain.ratings.PlayerRating;
 import io.github.xreatlabz.revprac.domain.stats.MatchSettlement;
 import io.github.xreatlabz.revprac.domain.stats.PlayerKitStatDelta;
 import io.github.xreatlabz.revprac.domain.stats.PlayerKitStats;
@@ -16,6 +17,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -43,6 +46,9 @@ public final class JdbcMatchSettlementRepository implements MatchSettlementRepos
                 }
                 for (PlayerKitStatDelta delta : settlement.statDeltas()) {
                     upsertStats(connection, delta);
+                }
+                for (PlayerRating rating : settlement.ratingUpdates()) {
+                    upsertRating(connection, rating);
                 }
                 connection.commit();
             } catch (SQLException exception) {
@@ -101,6 +107,39 @@ public final class JdbcMatchSettlementRepository implements MatchSettlementRepos
         }
     }
 
+    @Override
+    public List<MatchHistoryEntry> findRecentHistory(PlayerId playerId, int limit, int offset) {
+        Objects.requireNonNull(playerId, "playerId");
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit must be positive");
+        }
+        if (offset < 0) {
+            throw new IllegalArgumentException("offset must not be negative");
+        }
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "select match_id, player_one_id, player_two_id, arena_id, kit_id, match_origin, "
+                                + "end_reason, winner_id, loser_id, active_ticks, completed_at "
+                                + "from match_history "
+                                + "where player_one_id = ? or player_two_id = ? "
+                                + "order by completed_at desc, match_id desc "
+                                + "limit ? offset ?")) {
+            statement.setString(1, playerId.value().toString());
+            statement.setString(2, playerId.value().toString());
+            statement.setInt(3, limit);
+            statement.setInt(4, offset);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<MatchHistoryEntry> history = new ArrayList<>();
+                while (resultSet.next()) {
+                    history.add(mapHistory(resultSet));
+                }
+                return List.copyOf(history);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("Failed to load recent match history for " + playerId.value(), exception);
+        }
+    }
+
     private static int insertHistory(Connection connection, MatchHistoryEntry history) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "insert into match_history (match_id, player_one_id, player_two_id, arena_id, kit_id, "
@@ -144,6 +183,25 @@ public final class JdbcMatchSettlementRepository implements MatchSettlementRepos
             statement.setLong(7, delta.timeouts());
             statement.setLong(8, delta.shutdowns());
             statement.setLong(9, delta.updatedAt().toEpochMilli());
+            statement.executeUpdate();
+        }
+    }
+
+    private static void upsertRating(Connection connection, PlayerRating rating) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "insert into player_ratings (player_id, kit_id, rating, wins, losses, updated_at) "
+                        + "values (?, ?, ?, ?, ?, ?) "
+                        + "on conflict(player_id, kit_id) do update set "
+                        + "rating = excluded.rating, "
+                        + "wins = excluded.wins, "
+                        + "losses = excluded.losses, "
+                        + "updated_at = excluded.updated_at")) {
+            statement.setString(1, rating.playerId().value().toString());
+            statement.setString(2, rating.kitId().value());
+            statement.setInt(3, rating.rating());
+            statement.setInt(4, rating.wins());
+            statement.setInt(5, rating.losses());
+            statement.setLong(6, rating.updatedAt().toEpochMilli());
             statement.executeUpdate();
         }
     }

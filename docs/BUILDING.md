@@ -139,6 +139,23 @@ rg -n "import (java\\.sql|javax\\.sql|org\\.flywaydb|org\\.sqlite|org\\.postgres
 
 The import check should return no matches in application, domain, or ports. JDBC, HikariCP, and Flyway belong under `adapters.storage.jdbc`. `src/main/resources/plugin.yml` declares the runtime libraries, and `JdbcStorageFactory` should fail closed on invalid paths or migration errors before repositories are exposed.
 
+## Phase 6C Ranked Progression And Stats
+
+For ranked progression and `/stats` work, run the focused rating, settlement, query, command, storage, and plugin tests before the full gate:
+
+```bash
+./gradlew test --tests '*RatingServiceTest' --tests '*MatchSettlementServiceTest' --tests '*PlayerRecordQueryServiceTest'
+./gradlew test --tests '*RevPracStatsCommandTest' --tests '*JdbcStorageFactoryTest' --tests '*RevPracPluginPhase6Test'
+```
+
+Boundary checks:
+
+```bash
+rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java/io/github/xreatlabz/revprac/application/ratings src/main/java/io/github/xreatlabz/revprac/application/players
+```
+
+The import check should return no matches. Ranked progression belongs in `application.ratings` and self-facing stats queries belong in `application.players`. Paper command parsing for `/stats` belongs in `adapters.paper.commands`, and the command should stay self-only with `revprac.stats` defaulting to `true`.
+
 ## Dependency Updates
 
 Dependency versions live in `gradle/libs.versions.toml`.

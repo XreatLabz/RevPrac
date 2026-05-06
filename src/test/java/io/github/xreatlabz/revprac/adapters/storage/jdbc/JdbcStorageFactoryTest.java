@@ -102,7 +102,10 @@ final class JdbcStorageFactoryTest {
                         completedAt),
                 List.of(
                         new PlayerKitStatDelta(winnerId, kitId, 1, 1, 0, 0, 0, 0, completedAt),
-                        new PlayerKitStatDelta(loserId, kitId, 1, 0, 1, 0, 0, 0, completedAt)));
+                        new PlayerKitStatDelta(loserId, kitId, 1, 0, 1, 0, 0, 0, completedAt)),
+                List.of(
+                        new PlayerRating(winnerId, kitId, 1016, 1, 0, completedAt),
+                        new PlayerRating(loserId, kitId, 984, 0, 1, completedAt)));
 
         try (StorageHandle storage = openStorage(dataFolder, "storage/revprac.db")) {
             storage.matchSettlements().record(settlement);
@@ -110,6 +113,7 @@ final class JdbcStorageFactoryTest {
 
             assertEquals(1L, countRows(storage.databasePath(), "match_history"));
             assertEquals(2L, countRows(storage.databasePath(), "player_kit_stats"));
+            assertEquals(2L, countRows(storage.databasePath(), "player_ratings"));
         }
 
         try (StorageHandle reopened = openStorage(dataFolder, "storage/revprac.db")) {
@@ -127,6 +131,139 @@ final class JdbcStorageFactoryTest {
             assertEquals(1L, loserStats.matchesPlayed());
             assertEquals(0L, loserStats.wins());
             assertEquals(1L, loserStats.losses());
+
+            PlayerRating winnerRating = reopened.playerRatings().find(winnerId, kitId).orElseThrow();
+            PlayerRating loserRating = reopened.playerRatings().find(loserId, kitId).orElseThrow();
+            assertEquals(1016, winnerRating.rating());
+            assertEquals(1, winnerRating.wins());
+            assertEquals(0, winnerRating.losses());
+            assertEquals(984, loserRating.rating());
+            assertEquals(0, loserRating.wins());
+            assertEquals(1, loserRating.losses());
+        }
+    }
+
+    @Test
+    void recentHistoryQueriesMatchBothParticipantsOrderNewestFirstAndPaginate() throws Exception {
+        Path dataFolder = tempDir.resolve("plugin-data");
+        PlayerId playerId = player("history-player");
+        PlayerId opponentOne = player("history-opponent-one");
+        PlayerId opponentTwo = player("history-opponent-two");
+        PlayerId opponentThree = player("history-opponent-three");
+        KitId kitId = new KitId("nodebuff");
+        MatchSettlement first = settlement(
+                "history-one",
+                playerId,
+                opponentOne,
+                kitId,
+                Instant.parse("2026-05-04T10:00:00Z"));
+        MatchSettlement second = settlement(
+                "history-two",
+                opponentTwo,
+                playerId,
+                kitId,
+                Instant.parse("2026-05-04T11:00:00Z"));
+        MatchSettlement third = settlement(
+                "history-three",
+                playerId,
+                opponentThree,
+                kitId,
+                Instant.parse("2026-05-04T12:00:00Z"));
+        MatchSettlement unrelated = settlement(
+                "history-unrelated",
+                player("other-one"),
+                player("other-two"),
+                kitId,
+                Instant.parse("2026-05-04T13:00:00Z"));
+
+        try (StorageHandle storage = openStorage(dataFolder, "storage/revprac.db")) {
+            storage.matchSettlements().record(first);
+            storage.matchSettlements().record(second);
+            storage.matchSettlements().record(third);
+            storage.matchSettlements().record(unrelated);
+
+            List<MatchHistoryEntry> firstPage = storage.matchSettlements().findRecentHistory(playerId, 2, 0);
+            List<MatchHistoryEntry> secondPage = storage.matchSettlements().findRecentHistory(playerId, 2, 2);
+
+            assertEquals(List.of(
+                            third.history().matchId(),
+                            second.history().matchId()),
+                    firstPage.stream().map(MatchHistoryEntry::matchId).toList());
+            assertEquals(List.of(
+                            Instant.parse("2026-05-04T12:00:00Z"),
+                            Instant.parse("2026-05-04T11:00:00Z")),
+                    firstPage.stream().map(MatchHistoryEntry::completedAt).toList());
+            assertEquals(List.of(first.history().matchId()), secondPage.stream().map(MatchHistoryEntry::matchId).toList());
+            assertEquals(playerId, secondPage.getFirst().playerOneId());
+
+            assertThrows(IllegalArgumentException.class, () -> storage.matchSettlements().findRecentHistory(playerId, 0, 0));
+            assertThrows(IllegalArgumentException.class, () -> storage.matchSettlements().findRecentHistory(playerId, 1, -1));
+        }
+    }
+
+    @Test
+    void recentHistoryBreaksCompletedAtTiesByMatchIdDescending() throws Exception {
+        Path dataFolder = tempDir.resolve("plugin-data");
+        PlayerId playerId = player("history-tie-player");
+        PlayerId firstOpponent = player("history-tie-opponent-one");
+        PlayerId secondOpponent = player("history-tie-opponent-two");
+        KitId kitId = new KitId("nodebuff");
+        Instant completedAt = Instant.parse("2026-05-04T15:00:00Z");
+        MatchId lowerMatchId = new MatchId(UUID.fromString("00000000-0000-0000-0000-000000000001"));
+        MatchId higherMatchId = new MatchId(UUID.fromString("00000000-0000-0000-0000-000000000002"));
+
+        try (StorageHandle storage = openStorage(dataFolder, "storage/revprac.db")) {
+            storage.matchSettlements().record(settlement(
+                    lowerMatchId,
+                    playerId,
+                    firstOpponent,
+                    kitId,
+                    completedAt));
+            storage.matchSettlements().record(settlement(
+                    higherMatchId,
+                    playerId,
+                    secondOpponent,
+                    kitId,
+                    completedAt));
+
+            List<MatchHistoryEntry> recentHistory = storage.matchSettlements().findRecentHistory(playerId, 2, 0);
+
+            assertEquals(List.of(higherMatchId, lowerMatchId), recentHistory.stream()
+                    .map(MatchHistoryEntry::matchId)
+                    .toList());
+        }
+    }
+
+    @Test
+    void recentHistoryBreaksCompletedAtTiesByMatchIdTextDescending() throws Exception {
+        Path dataFolder = tempDir.resolve("plugin-data");
+        PlayerId playerId = player("history-tie-text-order-player");
+        PlayerId firstOpponent = player("history-tie-text-order-opponent-one");
+        PlayerId secondOpponent = player("history-tie-text-order-opponent-two");
+        KitId kitId = new KitId("nodebuff");
+        Instant completedAt = Instant.parse("2026-05-04T15:30:00Z");
+        MatchId textHigherButUuidLower = new MatchId(UUID.fromString("80000000-0000-0000-0000-000000000000"));
+        MatchId textLowerButUuidHigher = new MatchId(UUID.fromString("7fffffff-ffff-ffff-ffff-ffffffffffff"));
+
+        try (StorageHandle storage = openStorage(dataFolder, "storage/revprac.db")) {
+            storage.matchSettlements().record(settlement(
+                    textHigherButUuidLower,
+                    playerId,
+                    firstOpponent,
+                    kitId,
+                    completedAt));
+            storage.matchSettlements().record(settlement(
+                    textLowerButUuidHigher,
+                    playerId,
+                    secondOpponent,
+                    kitId,
+                    completedAt));
+
+            List<MatchHistoryEntry> recentHistory = storage.matchSettlements().findRecentHistory(playerId, 2, 0);
+
+            assertEquals(List.of(textHigherButUuidLower, textLowerButUuidHigher), recentHistory.stream()
+                    .map(MatchHistoryEntry::matchId)
+                    .toList());
         }
     }
 
@@ -142,6 +279,48 @@ final class JdbcStorageFactoryTest {
             assertTrue(reopened.databasePath().toFile().isFile());
             assertEquals(1L, countSuccessfulMigrationRows(reopened.databasePath(), "1"));
             assertEquals(1L, countSuccessfulMigrationRows(reopened.databasePath(), "2"));
+        }
+    }
+
+    @Test
+    void ratingWriteFailureRollsBackHistoryAndStats() throws Exception {
+        Path dataFolder = tempDir.resolve("plugin-data");
+        PlayerId winnerId = player("rollback-winner");
+        PlayerId loserId = player("rollback-loser");
+        KitId kitId = new KitId("nodebuff");
+        MatchId matchId = new MatchId(UUID.nameUUIDFromBytes("rollback-match".getBytes(StandardCharsets.UTF_8)));
+        Instant completedAt = Instant.ofEpochMilli(12_000L);
+        MatchSettlement settlement = new MatchSettlement(
+                new MatchHistoryEntry(
+                        matchId,
+                        winnerId,
+                        loserId,
+                        new ArenaId("arena-ranked"),
+                        kitId,
+                        MatchOrigin.QUEUE_RANKED,
+                        MatchEndReason.WIN,
+                        Optional.of(winnerId),
+                        Optional.of(loserId),
+                        31,
+                        completedAt),
+                List.of(
+                        new PlayerKitStatDelta(winnerId, kitId, 1, 1, 0, 0, 0, 0, completedAt),
+                        new PlayerKitStatDelta(loserId, kitId, 1, 0, 1, 0, 0, 0, completedAt)),
+                List.of(
+                        new PlayerRating(winnerId, kitId, 1016, 1, 0, completedAt),
+                        new PlayerRating(loserId, kitId, 984, 0, 1, completedAt)));
+
+        try (StorageHandle storage = openStorage(dataFolder, "storage/revprac.db")) {
+            installFailingRatingTrigger(storage.databasePath());
+
+            IllegalStateException failure = assertThrows(
+                    IllegalStateException.class,
+                    () -> storage.matchSettlements().record(settlement));
+
+            assertTrue(failure.getMessage().contains(matchId.value().toString()));
+            assertEquals(0L, countRows(storage.databasePath(), "match_history"));
+            assertEquals(0L, countRows(storage.databasePath(), "player_kit_stats"));
+            assertEquals(0L, countRows(storage.databasePath(), "player_ratings"));
         }
     }
 
@@ -295,12 +474,63 @@ final class JdbcStorageFactoryTest {
         }
     }
 
+    private static void installFailingRatingTrigger(Path databasePath) throws Exception {
+        try (Connection connection = openSqlite(databasePath);
+                PreparedStatement statement = connection.prepareStatement(
+                        "create trigger fail_player_ratings_insert "
+                                + "before insert on player_ratings "
+                                + "begin "
+                                + "select raise(fail, 'forced player_ratings failure'); "
+                                + "end")) {
+            statement.executeUpdate();
+        }
+    }
+
     private static Connection openSqlite(Path databasePath) throws Exception {
         return DriverManager.getConnection("jdbc:sqlite:" + databasePath);
     }
 
     private static PlayerId player(String seed) {
         return new PlayerId(UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static MatchSettlement settlement(
+            String seed,
+            PlayerId winnerId,
+            PlayerId loserId,
+            KitId kitId,
+            Instant completedAt) {
+        return settlement(
+                new MatchId(UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8))),
+                winnerId,
+                loserId,
+                kitId,
+                completedAt);
+    }
+
+    private static MatchSettlement settlement(
+            MatchId matchId,
+            PlayerId winnerId,
+            PlayerId loserId,
+            KitId kitId,
+            Instant completedAt) {
+        return new MatchSettlement(
+                new MatchHistoryEntry(
+                        matchId,
+                        winnerId,
+                        loserId,
+                        new ArenaId("arena-history"),
+                        kitId,
+                        MatchOrigin.DIRECT_DUEL,
+                        MatchEndReason.WIN,
+                        Optional.of(winnerId),
+                        Optional.of(loserId),
+                        32,
+                        completedAt),
+                List.of(
+                        new PlayerKitStatDelta(winnerId, kitId, 1, 1, 0, 0, 0, 0, completedAt),
+                        new PlayerKitStatDelta(loserId, kitId, 1, 0, 1, 0, 0, 0, completedAt)),
+                List.of());
     }
 
     private static final class StorageHandle implements AutoCloseable {
