@@ -124,10 +124,10 @@ The import check should return no matches for queue domain, application, ports, 
 
 ## Phase 6A Persistence Ratings
 
-For the durable player profile and rating slice, run the focused storage, config, and plugin lifecycle tests before the full gate:
+For the durable player profile and rating slice, run the focused storage, config, and plugin lifecycle tests before the full gate. This covers SQLite and the optional PostgreSQL backend, including active-season scoping:
 
 ```bash
-./gradlew test --tests '*LoadValidatedConfigServiceContractTest' --tests '*JdbcStorageFactoryTest' --tests '*RevPracPluginPhase6Test'
+./gradlew test --tests '*LoadValidatedConfigServiceContractTest' --tests '*JdbcStorageFactoryTest' --tests '*PostgresJdbcStorageFactoryTest' --tests '*RevPracPluginPhase6Test'
 ```
 
 Boundary checks:
@@ -137,15 +137,16 @@ rg -n "storage\\.|JdbcStorageFactory|JdbcStorageRuntime|Flyway|HikariCP|sqlite-j
 rg -n "import (java\\.sql|javax\\.sql|org\\.flywaydb|org\\.sqlite|org\\.postgresql|com\\.zaxxer\\.hikari)" src/main/java/io/github/xreatlabz/revprac/application src/main/java/io/github/xreatlabz/revprac/domain src/main/java/io/github/xreatlabz/revprac/ports
 ```
 
-The import check should return no matches in application, domain, or ports. JDBC, HikariCP, and Flyway belong under `adapters.storage.jdbc`. `src/main/resources/plugin.yml` declares the runtime libraries, and `JdbcStorageFactory` should fail closed on invalid paths or migration errors before repositories are exposed.
+The import check should return no matches in application, domain, or ports. JDBC, HikariCP, and Flyway belong under `adapters.storage.jdbc`. `src/main/resources/plugin.yml` declares the runtime libraries, and `JdbcStorageFactory` should fail closed on invalid paths or migration errors before repositories are exposed. The PostgreSQL storage tests use Testcontainers and skip cleanly when Docker is unavailable, so a missing Docker daemon should not fail the suite.
 
-## Phase 6C Ranked Progression And Stats
+## Phase 6C Ranked Progression, Stats, And Records
 
-For ranked progression and `/stats` work, run the focused rating, settlement, query, command, storage, and plugin tests before the full gate:
+For ranked progression, `/stats`, and `/records` work, run the focused rating, settlement, query, command, storage, and plugin tests before the full gate:
 
 ```bash
 ./gradlew test --tests '*RatingServiceTest' --tests '*MatchSettlementServiceTest' --tests '*PlayerRecordQueryServiceTest'
-./gradlew test --tests '*RevPracStatsCommandTest' --tests '*JdbcStorageFactoryTest' --tests '*RevPracPluginPhase6Test'
+./gradlew test --tests '*PlayerDirectoryServiceTest' --tests '*PlayerRecordTransferServiceTest' --tests '*RevPracStatsCommandTest' --tests '*RevPracRecordsCommandTest'
+./gradlew test --tests '*JdbcStorageFactoryTest' --tests '*PostgresJdbcStorageFactoryTest' --tests '*RevPracPluginPhase6Test'
 ```
 
 Boundary checks:
@@ -154,7 +155,59 @@ Boundary checks:
 rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java/io/github/xreatlabz/revprac/application/ratings src/main/java/io/github/xreatlabz/revprac/application/players
 ```
 
-The import check should return no matches. Ranked progression belongs in `application.ratings` and self-facing stats queries belong in `application.players`. Paper command parsing for `/stats` belongs in `adapters.paper.commands`, and the command should stay self-only with `revprac.stats` defaulting to `true`.
+The import check should return no matches. Ranked progression belongs in `application.ratings`, player lookup/query/transfer orchestration belongs in `application.players`, `/stats` stays self-only with `revprac.stats` defaulting to `true`, and `/records` parsing plus YAML transfer files belong under `adapters.paper`.
+
+## Phase 6 Task 3 Rematch And Post-Match Summaries
+
+For rematch and post-match summary work, run the focused application, command, lifecycle, settlement, and plugin tests before the wider gate:
+
+```bash
+git diff --check
+./gradlew test --tests '*RematchServiceTest' --tests '*PostMatchSummaryServiceTest' --tests '*RevPracDuelCommandTest'
+./gradlew test --tests '*MatchLifecycleServiceTest' --tests '*MatchSettlementServiceTest' --tests '*RevPracPluginPhase6Test'
+```
+
+Boundary checks:
+
+```bash
+rg -n "import (org\\.bukkit|io\\.papermc\\.paper)" src/main/java/io/github/xreatlabz/revprac/application/matches src/main/java/io/github/xreatlabz/revprac/application/ratings src/main/java/io/github/xreatlabz/revprac/ports/matches
+rg -n "rematch|PostMatchSummary|rating=|result=win|result=loss|result=draw" src/main/java src/test/java
+```
+
+The import check should return no matches in `application.matches`, `application.ratings`, or `ports.matches`. Rematch must reuse the current history/replay boundary instead of adding new command-side business logic, and post-match summaries must remain best-effort after successful teardown only.
+
+## Phase 6 Task 4 Runtime Recovery Sidecars
+
+For active queue, active match, player-session, and pending-restoration recovery work, run the focused service, storage, listener, and plugin tests before the wider gate:
+
+```bash
+./gradlew test --tests '*RuntimeRecoveryServiceTest' --tests '*JdbcStorageFactoryTest' --tests '*PostgresJdbcStorageFactoryTest'
+./gradlew test --tests '*PaperPlayerSessionListenerTest' --tests '*QueueServiceTest' --tests '*MatchLifecycleServiceTest' --tests '*RevPracPluginPhase6Test'
+```
+
+Recovery keeps the live repositories in memory and mirrors safe state into JDBC sidecar tables. Pairing queue tickets recover as searching, offline queue tickets recover lazily on join, active matches restart from a fresh countdown only when both combatants are online, and spectators are not recovered.
+
+## Phase 7 Staff Operations And Events
+
+For staff operations, safe registry reload, integration probes, audit, metrics, season commands, and public event bridging, run:
+
+```bash
+./gradlew test --tests '*RevPracAdminCommandTest' --tests '*PaperMatchEventBridgeTest' --tests '*JdbcStorageFactoryTest' --tests '*PostgresJdbcStorageFactoryTest'
+```
+
+Safe partial reload is registry-only: `/revprac reload registries` reloads arena and kit YAML after validation and refuses to run while queue tickets, matches, or arena reservations are active. Public plugin events are versioned through `RevPracMatchEvent.CONTRACT_VERSION`.
+
+## Phase 8 Hardening Base
+
+For the initial hardening base, party domain, and tournament domain, run:
+
+```bash
+./gradlew test --tests '*PartyTest' --tests '*PartyServiceTest' --tests '*InMemoryPartyRepositoryTest'
+./gradlew test --tests '*TournamentTest' --tests '*TournamentServiceTest' --tests '*InMemoryTournamentRepositoryTest'
+./gradlew test --tests '*RevPracAdminCommandTest' --tests '*JdbcStorageFactoryTest'
+```
+
+Phase 8 currently provides staff-controlled season rollover, durable audit rows, lightweight metrics, minimal in-memory party membership, and minimal in-memory tournament lifecycle services. Rich party matchmaking, tournament commands, load-test harnesses, and physical PostgreSQL partitioning are future expansion points.
 
 ## Dependency Updates
 

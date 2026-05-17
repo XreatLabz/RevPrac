@@ -3,6 +3,7 @@ package io.github.xreatlabz.revprac.ports.arenas;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaDefinition;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaId;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 public interface ArenaRegistryRepository {
@@ -10,6 +11,8 @@ public interface ArenaRegistryRepository {
     Optional<ArenaDefinition> find(ArenaId arenaId);
 
     boolean create(ArenaDefinition arenaDefinition);
+
+    void replaceAll(List<ArenaDefinition> arenaDefinitions);
 
     Collection<ArenaDefinition> findAll();
 }

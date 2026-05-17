@@ -249,6 +249,16 @@ final class RatingServiceTest {
         }
 
         @Override
+        public java.util.List<PlayerRating> findByPlayer(PlayerId playerId) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
+        public void replaceAllForPlayer(PlayerId playerId, java.util.List<PlayerRating> replacementRatings) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
         public void upsert(PlayerRating rating) {
             ratings.put(new RatingKey(rating.playerId(), rating.kitId()), rating);
         }
@@ -258,6 +268,16 @@ final class RatingServiceTest {
 
         @Override
         public Optional<PlayerRating> find(PlayerId playerId, KitId kitId) {
+            throw new AssertionError("repository should not be called for invalid defaults");
+        }
+
+        @Override
+        public java.util.List<PlayerRating> findByPlayer(PlayerId playerId) {
+            throw new AssertionError("repository should not be called for invalid defaults");
+        }
+
+        @Override
+        public void replaceAllForPlayer(PlayerId playerId, java.util.List<PlayerRating> replacementRatings) {
             throw new AssertionError("repository should not be called for invalid defaults");
         }
 

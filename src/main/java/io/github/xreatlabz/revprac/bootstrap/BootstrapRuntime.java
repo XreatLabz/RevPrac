@@ -10,9 +10,12 @@ import io.github.xreatlabz.revprac.application.config.RevPracConfig;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
 import io.github.xreatlabz.revprac.application.matches.DuelRequestService;
 import io.github.xreatlabz.revprac.application.matches.MatchLifecycleService;
+import io.github.xreatlabz.revprac.application.operations.StaffOperationsService;
+import io.github.xreatlabz.revprac.application.parties.PartyService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
 import io.github.xreatlabz.revprac.application.queues.QueueMatchmakingService;
 import io.github.xreatlabz.revprac.application.queues.QueueService;
+import io.github.xreatlabz.revprac.application.tournaments.TournamentService;
 import io.github.xreatlabz.revprac.ports.lifecycle.LifecycleReporter;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -33,6 +36,9 @@ public final class BootstrapRuntime {
     private final QueueMatchmakingService queueMatchmakingService;
     private final PaperQueueTicker paperQueueTicker;
     private final AutoCloseable storageRuntime;
+    private final StaffOperationsService staffOperationsService;
+    private final PartyService partyService;
+    private final TournamentService tournamentService;
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
 
     public BootstrapRuntime(
@@ -139,6 +145,78 @@ public final class BootstrapRuntime {
             QueueMatchmakingService queueMatchmakingService,
             PaperQueueTicker paperQueueTicker,
             AutoCloseable storageRuntime) {
+        this(
+                config,
+                lifecycleReporter,
+                playerSessionService,
+                arenaRegistryService,
+                kitRegistryService,
+                arenaRegistryFiles,
+                kitRegistryFiles,
+                duelRequestService,
+                matchLifecycleService,
+                paperMatchTicker,
+                queueService,
+                queueMatchmakingService,
+                paperQueueTicker,
+                storageRuntime,
+                null);
+    }
+
+    public BootstrapRuntime(
+            RevPracConfig config,
+            LifecycleReporter lifecycleReporter,
+            PlayerSessionService playerSessionService,
+            ArenaRegistryService arenaRegistryService,
+            KitRegistryService kitRegistryService,
+            PaperArenaRegistryFiles arenaRegistryFiles,
+            PaperKitRegistryFiles kitRegistryFiles,
+            DuelRequestService duelRequestService,
+            MatchLifecycleService matchLifecycleService,
+            PaperMatchTicker paperMatchTicker,
+            QueueService queueService,
+            QueueMatchmakingService queueMatchmakingService,
+            PaperQueueTicker paperQueueTicker,
+            AutoCloseable storageRuntime,
+            StaffOperationsService staffOperationsService) {
+        this(
+                config,
+                lifecycleReporter,
+                playerSessionService,
+                arenaRegistryService,
+                kitRegistryService,
+                arenaRegistryFiles,
+                kitRegistryFiles,
+                duelRequestService,
+                matchLifecycleService,
+                paperMatchTicker,
+                queueService,
+                queueMatchmakingService,
+                paperQueueTicker,
+                storageRuntime,
+                staffOperationsService,
+                null,
+                null);
+    }
+
+    public BootstrapRuntime(
+            RevPracConfig config,
+            LifecycleReporter lifecycleReporter,
+            PlayerSessionService playerSessionService,
+            ArenaRegistryService arenaRegistryService,
+            KitRegistryService kitRegistryService,
+            PaperArenaRegistryFiles arenaRegistryFiles,
+            PaperKitRegistryFiles kitRegistryFiles,
+            DuelRequestService duelRequestService,
+            MatchLifecycleService matchLifecycleService,
+            PaperMatchTicker paperMatchTicker,
+            QueueService queueService,
+            QueueMatchmakingService queueMatchmakingService,
+            PaperQueueTicker paperQueueTicker,
+            AutoCloseable storageRuntime,
+            StaffOperationsService staffOperationsService,
+            PartyService partyService,
+            TournamentService tournamentService) {
         this.config = Objects.requireNonNull(config, "config");
         this.lifecycleReporter = Objects.requireNonNull(lifecycleReporter, "lifecycleReporter");
         this.playerSessionService = Objects.requireNonNull(playerSessionService, "playerSessionService");
@@ -153,6 +231,9 @@ public final class BootstrapRuntime {
         this.queueMatchmakingService = queueMatchmakingService;
         this.paperQueueTicker = paperQueueTicker;
         this.storageRuntime = storageRuntime;
+        this.staffOperationsService = staffOperationsService;
+        this.partyService = partyService;
+        this.tournamentService = tournamentService;
     }
 
     public RevPracConfig config() {
@@ -201,6 +282,18 @@ public final class BootstrapRuntime {
 
     public JdbcStorageRuntime storageRuntime() {
         return storageRuntime instanceof JdbcStorageRuntime jdbcStorageRuntime ? jdbcStorageRuntime : null;
+    }
+
+    public StaffOperationsService staffOperationsService() {
+        return staffOperationsService;
+    }
+
+    public PartyService partyService() {
+        return partyService;
+    }
+
+    public TournamentService tournamentService() {
+        return tournamentService;
     }
 
     public void shutdown() {

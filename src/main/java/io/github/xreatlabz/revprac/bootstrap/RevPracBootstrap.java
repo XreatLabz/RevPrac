@@ -7,14 +7,19 @@ import io.github.xreatlabz.revprac.adapters.paper.arenas.PaperArenaResetAdapter;
 import io.github.xreatlabz.revprac.adapters.paper.commands.RevPracAdminCommand;
 import io.github.xreatlabz.revprac.adapters.paper.commands.RevPracDuelCommand;
 import io.github.xreatlabz.revprac.adapters.paper.commands.RevPracQueueCommand;
+import io.github.xreatlabz.revprac.adapters.paper.commands.RevPracRecordsCommand;
 import io.github.xreatlabz.revprac.adapters.paper.commands.RevPracStatsCommand;
+import io.github.xreatlabz.revprac.adapters.paper.events.PaperMatchEventBridge;
+import io.github.xreatlabz.revprac.adapters.paper.integrations.PaperIntegrationProbe;
 import io.github.xreatlabz.revprac.adapters.paper.kits.PaperKitLoadoutAdapter;
 import io.github.xreatlabz.revprac.adapters.paper.kits.PaperKitRegistryFiles;
 import io.github.xreatlabz.revprac.adapters.paper.matches.PaperMatchLifecycleListener;
 import io.github.xreatlabz.revprac.adapters.paper.matches.PaperMatchPlayerAdapter;
+import io.github.xreatlabz.revprac.adapters.paper.matches.PaperPostMatchSummaryPort;
 import io.github.xreatlabz.revprac.adapters.paper.matches.PaperMatchTicker;
 import io.github.xreatlabz.revprac.adapters.paper.queues.PaperQueueLifecycleListener;
 import io.github.xreatlabz.revprac.adapters.paper.queues.PaperQueueTicker;
+import io.github.xreatlabz.revprac.adapters.paper.players.PaperPlayerRecordTransferFiles;
 import io.github.xreatlabz.revprac.adapters.paper.players.PaperPlayerSessionListener;
 import io.github.xreatlabz.revprac.adapters.paper.players.PaperPlayerStateAdapter;
 import io.github.xreatlabz.revprac.adapters.storage.jdbc.JdbcStorageFactory;
@@ -23,12 +28,20 @@ import io.github.xreatlabz.revprac.adapters.storage.InMemoryArenaRegistryReposit
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryDuelRequestRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryKitRegistryRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryMatchRepository;
+import io.github.xreatlabz.revprac.adapters.storage.InMemoryPartyRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueTicketRepository;
+import io.github.xreatlabz.revprac.adapters.storage.InMemoryTournamentRepository;
+import io.github.xreatlabz.revprac.adapters.storage.RecoveryMatchRepository;
+import io.github.xreatlabz.revprac.adapters.storage.RecoveryPendingRestorationRepository;
+import io.github.xreatlabz.revprac.adapters.storage.RecoveryPlayerSessionRepository;
+import io.github.xreatlabz.revprac.adapters.storage.RecoveryQueueTicketRepository;
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
+import io.github.xreatlabz.revprac.application.players.PlayerDirectoryService;
 import io.github.xreatlabz.revprac.application.players.PlayerRecordQueryService;
+import io.github.xreatlabz.revprac.application.players.PlayerRecordTransferService;
 import io.github.xreatlabz.revprac.application.players.PlayerProfileService;
 import io.github.xreatlabz.revprac.application.config.LoadValidatedConfigService;
 import io.github.xreatlabz.revprac.application.config.QueueConfig;
@@ -36,11 +49,19 @@ import io.github.xreatlabz.revprac.application.config.RevPracConfig;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
 import io.github.xreatlabz.revprac.application.matches.DuelRequestService;
 import io.github.xreatlabz.revprac.application.matches.MatchLifecycleService;
+import io.github.xreatlabz.revprac.application.matches.PostMatchSummaryService;
 import io.github.xreatlabz.revprac.application.matches.MatchSettlementService;
+import io.github.xreatlabz.revprac.application.matches.RematchService;
+import io.github.xreatlabz.revprac.application.operations.MatchEventAuditSink;
+import io.github.xreatlabz.revprac.application.operations.OperationalMetrics;
+import io.github.xreatlabz.revprac.application.operations.StaffOperationsService;
+import io.github.xreatlabz.revprac.application.parties.PartyService;
 import io.github.xreatlabz.revprac.application.queues.PlayerAvailabilityService;
 import io.github.xreatlabz.revprac.application.queues.QueueMatchmakingService;
 import io.github.xreatlabz.revprac.application.queues.QueueService;
 import io.github.xreatlabz.revprac.application.ratings.RatingService;
+import io.github.xreatlabz.revprac.application.recovery.RuntimeRecoveryService;
+import io.github.xreatlabz.revprac.application.tournaments.TournamentService;
 import io.github.xreatlabz.revprac.application.result.Err;
 import io.github.xreatlabz.revprac.application.result.Ok;
 import io.github.xreatlabz.revprac.application.result.Problem;
@@ -52,7 +73,10 @@ import io.github.xreatlabz.revprac.domain.queues.MatchmakingWindowPolicy;
 import io.github.xreatlabz.revprac.ports.matches.DuelRequestRepository;
 import io.github.xreatlabz.revprac.ports.matches.MatchRepository;
 import io.github.xreatlabz.revprac.ports.lifecycle.LifecycleReporter;
+import io.github.xreatlabz.revprac.ports.players.PendingRestorationRepository;
+import io.github.xreatlabz.revprac.ports.players.PlayerSessionRepository;
 import io.github.xreatlabz.revprac.ports.queues.QueueTicketRepository;
+import io.github.xreatlabz.revprac.ports.recovery.RuntimeRecoveryRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.nio.file.Path;
@@ -139,19 +163,33 @@ public final class RevPracBootstrap {
         try {
             postStorageBootstrapHook.afterStorageCreated(storageRuntime);
             PaperPlayerStateAdapter playerStateAdapter = new PaperPlayerStateAdapter(plugin.getServer());
-            PlayerSessionService playerSessionService = new PlayerSessionService(
+            Clock clock = Clock.systemUTC();
+            RuntimeRecoveryRepository recoveryRepository = storageRuntime.runtimeRecoveryRepository();
+            PlayerSessionRepository playerSessionRepository = new RecoveryPlayerSessionRepository(
                     new InMemoryPlayerSessionRepository(),
+                    recoveryRepository);
+            PendingRestorationRepository pendingRestorationRepository = new RecoveryPendingRestorationRepository(
                     new InMemoryPendingRestorationRepository(),
+                    recoveryRepository);
+            PlayerSessionService playerSessionService = new PlayerSessionService(
+                    playerSessionRepository,
+                    pendingRestorationRepository,
                     playerStateAdapter);
             PlayerProfileService playerProfileService = new PlayerProfileService(storageRuntime.playerProfileRepository());
             RatingService ratingService = new RatingService(storageRuntime.playerRatingRepository());
             PaperKitLoadoutAdapter kitLoadoutAdapter = new PaperKitLoadoutAdapter();
-            MatchRepository matchRepository = new InMemoryMatchRepository();
+            MatchRepository matchRepository = new RecoveryMatchRepository(
+                    new InMemoryMatchRepository(),
+                    recoveryRepository);
             DuelRequestRepository duelRequestRepository = new InMemoryDuelRequestRepository();
-            QueueTicketRepository queueTicketRepository = new InMemoryQueueTicketRepository();
+            QueueTicketRepository queueTicketRepository = new RecoveryQueueTicketRepository(
+                    new InMemoryQueueTicketRepository(),
+                    recoveryRepository,
+                    clock);
             PlayerAvailabilityService availabilityService =
                     new PlayerAvailabilityService(matchRepository, duelRequestRepository, queueTicketRepository);
             QueueConfig queueConfig = config.queues();
+            Duration duelRequestTtl = Duration.ofSeconds(config.matches().duelRequestExpirySeconds());
             MatchRuleset matchRuleset = new MatchRuleset(
                     config.matches().countdownTicks(),
                     config.matches().maxDurationTicks(),
@@ -161,14 +199,36 @@ public final class RevPracBootstrap {
                             storageRuntime.matchSettlementRepository(),
                             ratingService,
                             queueConfig.rankedBaseRating());
+            PostMatchSummaryService postMatchSummaryService =
+                    new PostMatchSummaryService(new PaperPostMatchSummaryPort(plugin.getServer()));
             PlayerRecordQueryService playerRecordQueryService = new PlayerRecordQueryService(
                     kitRegistryService,
                     storageRuntime.matchSettlementRepository(),
                     storageRuntime.playerRatingRepository(),
                     storageRuntime.playerProfileRepository(),
                     queueConfig);
+            PlayerDirectoryService playerDirectoryService =
+                    new PlayerDirectoryService(storageRuntime.playerProfileRepository());
+            PlayerRecordTransferService playerRecordTransferService = new PlayerRecordTransferService(
+                    storageRuntime.playerRecordTransferRepository(),
+                    new PaperPlayerRecordTransferFiles(plugin.getDataFolder().toPath()));
             PaperMatchPlayerAdapter matchPlayerAdapter = new PaperMatchPlayerAdapter(plugin.getServer(), kitLoadoutAdapter);
+            OperationalMetrics operationalMetrics = new OperationalMetrics();
+            MatchEventAuditSink auditSink = new MatchEventAuditSink(storageRuntime.auditRepository(), clock);
+            PaperMatchEventBridge eventBridge = new PaperMatchEventBridge(plugin.getServer().getPluginManager());
             Consumer<MatchEvent> eventSink = event -> {
+                try {
+                    operationalMetrics.accept(event);
+                } catch (RuntimeException ignored) {
+                }
+                try {
+                    auditSink.accept(event);
+                } catch (RuntimeException ignored) {
+                }
+                try {
+                    eventBridge.accept(event);
+                } catch (RuntimeException ignored) {
+                }
             };
             MatchLifecycleService matchLifecycleService = new MatchLifecycleService(
                     matchRepository,
@@ -178,7 +238,8 @@ public final class RevPracBootstrap {
                     matchPlayerAdapter,
                     matchRuleset,
                     matchSettlementService,
-                    Clock.systemUTC(),
+                    postMatchSummaryService,
+                    clock,
                     eventSink);
             DuelRequestService duelRequestService = new DuelRequestService(
                     duelRequestRepository,
@@ -188,9 +249,14 @@ public final class RevPracBootstrap {
                     matchPlayerAdapter,
                     matchLifecycleService,
                     availabilityService,
-                    Clock.systemUTC(),
-                    Duration.ofSeconds(config.matches().duelRequestExpirySeconds()),
+                    clock,
+                    duelRequestTtl,
                     eventSink);
+            RematchService rematchService = new RematchService(
+                    storageRuntime.matchSettlementRepository(),
+                    duelRequestService,
+                    clock,
+                    duelRequestTtl);
             QueueService queueService = new QueueService(
                     queueTicketRepository,
                     ratingService,
@@ -198,15 +264,43 @@ public final class RevPracBootstrap {
                     playerSessionService,
                     kitRegistryService,
                     playerStateAdapter,
-                    Clock.systemUTC(),
+                    clock,
                     queueConfig);
             QueueMatchmakingService queueMatchmakingService = new QueueMatchmakingService(
                     queueTicketRepository,
                     matchLifecycleService,
                     new MatchmakingWindowPolicy(queueConfig.rankedWindows()),
                     queueConfig);
+            RuntimeRecoveryService runtimeRecoveryService = new RuntimeRecoveryService(
+                    recoveryRepository,
+                    playerSessionRepository,
+                    pendingRestorationRepository,
+                    queueTicketRepository,
+                    matchRepository,
+                    playerStateAdapter);
+            PartyService partyService = new PartyService(new InMemoryPartyRepository());
+            TournamentService tournamentService = new TournamentService(new InMemoryTournamentRepository());
+            StaffOperationsService staffOperationsService = new StaffOperationsService(
+                    config,
+                    arenaRegistryService,
+                    kitRegistryService,
+                    duelRequestService,
+                    matchLifecycleService,
+                    queueService,
+                    storageRuntime.seasonService(),
+                    storageRuntime.auditRepository(),
+                    new PaperIntegrationProbe(plugin.getServer().getPluginManager()),
+                    operationalMetrics,
+                    arenaRegistryFiles::load,
+                    kitRegistryFiles::load,
+                    clock);
             PaperPlayerSessionListener playerSessionListener =
-                    new PaperPlayerSessionListener(plugin, playerSessionService, playerProfileService, Clock.systemUTC());
+                    new PaperPlayerSessionListener(
+                            plugin,
+                            playerSessionService,
+                            playerProfileService,
+                            runtimeRecoveryService,
+                            clock);
             PaperMatchLifecycleListener matchLifecycleListener =
                     new PaperMatchLifecycleListener(matchLifecycleService, matchRepository, matchPlayerAdapter);
             PaperQueueLifecycleListener queueLifecycleListener = new PaperQueueLifecycleListener(queueService);
@@ -217,6 +311,7 @@ public final class RevPracBootstrap {
             plugin.getServer().getPluginManager().registerEvents(playerSessionListener, plugin);
             plugin.getServer().getPluginManager().registerEvents(matchLifecycleListener, plugin);
             plugin.getServer().getPluginManager().registerEvents(queueLifecycleListener, plugin);
+            runtimeRecoveryService.recoverBootstrapState();
             plugin.getServer().getOnlinePlayers().forEach(playerSessionListener::trackPlayerAfterJoin);
             BootstrapRuntime runtime = new BootstrapRuntime(
                     config,
@@ -232,15 +327,24 @@ public final class RevPracBootstrap {
                     queueService,
                     queueMatchmakingService,
                     paperQueueTicker,
-                    storageRuntime);
+                    storageRuntime,
+                    staffOperationsService,
+                    partyService,
+                    tournamentService);
             Objects.requireNonNull(plugin.getCommand("revprac"), "revprac command must be declared in plugin.yml")
                     .setExecutor(new RevPracAdminCommand(runtime, kitLoadoutAdapter));
             Objects.requireNonNull(plugin.getCommand("duel"), "duel command must be declared in plugin.yml")
-                    .setExecutor(new RevPracDuelCommand(plugin.getServer(), duelRequestService, matchLifecycleService));
+                    .setExecutor(new RevPracDuelCommand(
+                            plugin.getServer(), duelRequestService, rematchService, matchLifecycleService));
             Objects.requireNonNull(plugin.getCommand("queue"), "queue command must be declared in plugin.yml")
                     .setExecutor(new RevPracQueueCommand(queueService, paperQueueTicker::currentTick));
             Objects.requireNonNull(plugin.getCommand("stats"), "stats command must be declared in plugin.yml")
                     .setExecutor(new RevPracStatsCommand(playerRecordQueryService));
+            Objects.requireNonNull(plugin.getCommand("records"), "records command must be declared in plugin.yml")
+                    .setExecutor(new RevPracRecordsCommand(
+                            playerDirectoryService,
+                            playerRecordQueryService,
+                            playerRecordTransferService));
             paperQueueTicker.start();
             paperMatchTicker.start();
             if (config.diagnostics().verboseLifecycleLogs()) {

@@ -19,6 +19,7 @@ import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRe
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueRatingRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueTicketRepository;
+import io.github.xreatlabz.revprac.adapters.storage.RecoveryQueueTicketRepository;
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.config.BootstrapConfig;
 import io.github.xreatlabz.revprac.application.config.DiagnosticsConfig;
@@ -128,7 +129,8 @@ final class RevPracPluginPhase5Test {
         assertSame(queueRepository, matchmakingRepository);
         assertSame(queueRepository, availabilityRepository);
         assertSame(sessionPlayerStatePort, queuePlayerStatePort);
-        assertInstanceOf(InMemoryQueueTicketRepository.class, queueRepository);
+        assertInstanceOf(RecoveryQueueTicketRepository.class, queueRepository);
+        assertInstanceOf(InMemoryQueueTicketRepository.class, field(queueRepository, "delegate"));
         assertEquals(
                 "io.github.xreatlabz.revprac.adapters.storage.jdbc.JdbcPlayerRatingRepository",
                 playerRatingRepository.getClass().getName());

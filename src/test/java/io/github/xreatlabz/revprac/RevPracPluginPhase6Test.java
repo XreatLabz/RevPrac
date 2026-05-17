@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueTicketRepository;
+import io.github.xreatlabz.revprac.adapters.storage.RecoveryQueueTicketRepository;
 import io.github.xreatlabz.revprac.application.config.BootstrapConfig;
 import io.github.xreatlabz.revprac.application.config.DiagnosticsConfig;
 import io.github.xreatlabz.revprac.application.config.RevPracConfig;
@@ -50,28 +51,49 @@ final class RevPracPluginPhase6Test {
     }
 
     @Test
-    void pluginYmlDeclaresLibrariesAndStatsCommandAndEnableWiresJdbcStorageIntoQueueRuntime() throws Exception {
+    void pluginYmlDeclaresLibrariesStatsAndRecordsCommandsAndEnableWiresJdbcStorageIntoQueueRuntime()
+            throws Exception {
         MockBukkit.mock();
 
         RevPracPlugin plugin = MockBukkit.load(RevPracPlugin.class);
         BootstrapRuntime runtime = runtime(plugin);
         YamlConfiguration pluginYaml = loadPluginYaml();
+        PluginCommand duelCommand = MockBukkit.getMock().getPluginCommand("duel");
         PluginCommand statsCommand = MockBukkit.getMock().getPluginCommand("stats");
+        PluginCommand recordsCommand = MockBukkit.getMock().getPluginCommand("records");
 
         assertEquals(
                 List.of(
                         "com.zaxxer:HikariCP:7.0.2",
                         "org.flywaydb:flyway-core:12.5.0",
+                        "org.flywaydb:flyway-database-postgresql:12.5.0",
+                        "org.postgresql:postgresql:42.7.11",
                         "org.xerial:sqlite-jdbc:3.53.0.0"),
                 pluginYaml.getStringList("libraries"));
         assertEquals("revprac.stats", pluginYaml.getString("commands.stats.permission"));
         assertTrue(pluginYaml.getBoolean("permissions.revprac.stats.default"));
+        assertTrue(pluginYaml.getString("commands.duel.usage").contains("rematch <player>"));
+        assertEquals("revprac.duel", pluginYaml.getString("commands.duel.permission"));
+        assertEquals("revprac.records", pluginYaml.getString("commands.records.permission"));
+        assertEquals("op", pluginYaml.getString("permissions.revprac.records.default"));
+        assertFalse(pluginYaml.contains("permissions.revprac.duel.rematch"));
+        assertNotNull(duelCommand, "plugin.yml should declare /duel");
         assertNotNull(statsCommand, "plugin.yml should declare /stats");
+        assertNotNull(recordsCommand, "plugin.yml should declare /records");
+        assertEquals("revprac.duel", duelCommand.getPermission());
         assertEquals("revprac.stats", statsCommand.getPermission());
+        assertEquals("revprac.records", recordsCommand.getPermission());
+        assertNotNull(duelCommand.getExecutor(), "Bootstrap should register the /duel executor");
         assertNotNull(statsCommand.getExecutor(), "Bootstrap should register the /stats executor");
+        assertNotNull(recordsCommand.getExecutor(), "Bootstrap should register the /records executor");
         assertTrue(Files.isRegularFile(plugin.getDataFolder().toPath().resolve("data/revprac.db")));
         assertNotNull(field(runtime, "storageRuntime"));
-        assertInstanceOf(InMemoryQueueTicketRepository.class, field(runtime.queueService(), "queueTicketRepository"));
+        assertNotNull(runtime.staffOperationsService(), "Bootstrap should expose staff operations");
+        assertNotNull(runtime.partyService(), "Bootstrap should own the Phase 8 party service");
+        assertNotNull(runtime.tournamentService(), "Bootstrap should own the Phase 8 tournament service");
+        Object queueTicketRepository = field(runtime.queueService(), "queueTicketRepository");
+        assertInstanceOf(RecoveryQueueTicketRepository.class, queueTicketRepository);
+        assertInstanceOf(InMemoryQueueTicketRepository.class, field(queueTicketRepository, "delegate"));
 
         Object ratingService = field(runtime.queueService(), "ratingService");
         Object ratingStore = field(ratingService, "ratingStore");

@@ -1,6 +1,7 @@
 package io.github.xreatlabz.revprac.application.matches;
 
 import io.github.xreatlabz.revprac.application.ratings.RatingService;
+import io.github.xreatlabz.revprac.application.ratings.RatingProgression;
 import io.github.xreatlabz.revprac.domain.matches.Match;
 import io.github.xreatlabz.revprac.domain.matches.MatchEndReason;
 import io.github.xreatlabz.revprac.domain.matches.MatchHistoryEntry;
@@ -54,30 +55,39 @@ public final class MatchSettlementService {
         return new MatchSettlementService();
     }
 
-    public void settle(Match match) {
+    public MatchSettlementResult settle(Match match) {
         Objects.requireNonNull(match, "match");
         if (match.state() != MatchState.COMPLETED) {
             throw new IllegalArgumentException("only completed matches can be settled");
         }
         if (!enabled) {
-            return;
+            return createSettlementResult(match);
         }
         if (requiresRankedSettlementSerialization(match)) {
             synchronized (rankedSettlementMutex) {
-                recordSettlement(match);
+                MatchSettlementResult settlementResult = createSettlementResult(match);
+                return settlementResult.withApplied(recordSettlement(settlementResult));
             }
-            return;
         }
-        recordSettlement(match);
+        MatchSettlementResult settlementResult = createSettlementResult(match);
+        return settlementResult.withApplied(recordSettlement(settlementResult));
     }
 
-    private void recordSettlement(Match match) {
+    private MatchSettlementResult createSettlementResult(Match match) {
         Instant completedAt = match.completedAt().orElseThrow();
         MatchOutcome outcome = match.outcome().orElseThrow();
-        matchSettlementRepository.record(new MatchSettlement(
-                history(match, outcome, completedAt),
-                deltas(match, outcome, completedAt),
-                ratingUpdates(match, outcome, completedAt)));
+        Optional<RatingProgression> ratingProgression = ratingProgression(match, outcome, completedAt);
+        return new MatchSettlementResult(
+                new MatchSettlement(
+                        history(match, outcome, completedAt),
+                        deltas(match, outcome, completedAt),
+                        ratingProgression.map(RatingProgression::asList).orElseGet(List::of)),
+                true,
+                ratingProgression);
+    }
+
+    private boolean recordSettlement(MatchSettlementResult settlementResult) {
+        return matchSettlementRepository.record(settlementResult.settlement());
     }
 
     private boolean requiresRankedSettlementSerialization(Match match) {
@@ -105,20 +115,18 @@ public final class MatchSettlementService {
                 deltaFor(match.participants().playerTwo(), match, outcome, completedAt));
     }
 
-    private List<PlayerRating> ratingUpdates(Match match, MatchOutcome outcome, Instant completedAt) {
+    private Optional<RatingProgression> ratingProgression(Match match, MatchOutcome outcome, Instant completedAt) {
         if (ratingService == null) {
-            return List.of();
+            return Optional.empty();
         }
         return ratingService.progression(
-                        match.origin(),
-                        outcome,
-                        match.participants().playerOne(),
-                        match.participants().playerTwo(),
-                        match.kitId(),
-                        rankedBaseRating,
-                        completedAt)
-                .map(io.github.xreatlabz.revprac.application.ratings.RatingProgression::asList)
-                .orElseGet(List::of);
+                match.origin(),
+                outcome,
+                match.participants().playerOne(),
+                match.participants().playerTwo(),
+                match.kitId(),
+                rankedBaseRating,
+                completedAt);
     }
 
     private static PlayerKitStatDelta deltaFor(

@@ -145,6 +145,12 @@ public final class QueueService {
         intakeClosed.set(true);
     }
 
+    public long activeTicketCount() {
+        return queueTicketRepository.findAll().stream()
+                .filter(QueueService::isActive)
+                .count();
+    }
+
     public void shutdownAll() {
         intakeClosed.set(true);
         RuntimeException failure = null;

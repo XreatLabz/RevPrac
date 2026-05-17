@@ -4,7 +4,9 @@ import io.github.xreatlabz.revprac.domain.kits.KitDefinition;
 import io.github.xreatlabz.revprac.domain.kits.KitId;
 import io.github.xreatlabz.revprac.ports.kits.KitRegistryRepository;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -24,6 +26,20 @@ public final class InMemoryKitRegistryRepository implements KitRegistryRepositor
     public boolean create(KitDefinition kitDefinition) {
         Objects.requireNonNull(kitDefinition, "kitDefinition");
         return kits.putIfAbsent(kitDefinition.id(), kitDefinition) == null;
+    }
+
+    @Override
+    public void replaceAll(List<KitDefinition> kitDefinitions) {
+        Objects.requireNonNull(kitDefinitions, "kitDefinitions");
+        Map<KitId, KitDefinition> replacement = new HashMap<>();
+        for (KitDefinition kitDefinition : kitDefinitions) {
+            Objects.requireNonNull(kitDefinition, "kitDefinition");
+            if (replacement.putIfAbsent(kitDefinition.id(), kitDefinition) != null) {
+                throw new IllegalArgumentException("Kit already exists: " + kitDefinition.id().value());
+            }
+        }
+        kits.clear();
+        kits.putAll(replacement);
     }
 
     @Override

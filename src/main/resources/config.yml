@@ -26,4 +26,9 @@ queues:
 storage:
   backend: sqlite
   sqlite-path: data/revprac.db
+  postgresql:
+    jdbc-url: ""
+    username: ""
+    password: ""
+    schema: ""
   pool-maximum-size: 4

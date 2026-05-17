@@ -417,6 +417,16 @@ final class RevPracStatsCommandTest {
         }
 
         @Override
+        public List<PlayerRating> findByPlayer(PlayerId playerId) {
+            throw new UnsupportedOperationException("unused");
+        }
+
+        @Override
+        public void replaceAllForPlayer(PlayerId playerId, List<PlayerRating> replacementRatings) {
+            throw new UnsupportedOperationException("unused");
+        }
+
+        @Override
         public void upsert(PlayerRating rating) {
             ratings.put(new Key(rating.playerId(), rating.kitId()), rating);
         }
@@ -428,6 +438,21 @@ final class RevPracStatsCommandTest {
         @Override
         public Optional<PlayerProfile> find(PlayerId playerId) {
             return Optional.ofNullable(profiles.get(playerId));
+        }
+
+        @Override
+        public List<PlayerProfile> findByLastKnownNameIgnoreCase(String lastKnownName) {
+            throw new UnsupportedOperationException("unused");
+        }
+
+        @Override
+        public void delete(PlayerId playerId) {
+            profiles.remove(playerId);
+        }
+
+        @Override
+        public void restoreExact(PlayerProfile profile) {
+            profiles.put(profile.playerId(), profile);
         }
 
         @Override
@@ -443,6 +468,21 @@ final class RevPracStatsCommandTest {
         }
 
         @Override
+        public List<PlayerProfile> findByLastKnownNameIgnoreCase(String lastKnownName) {
+            throw new UnsupportedOperationException("unused");
+        }
+
+        @Override
+        public void delete(PlayerId playerId) {
+            throw new UnsupportedOperationException("unused");
+        }
+
+        @Override
+        public void restoreExact(PlayerProfile profile) {
+            throw new UnsupportedOperationException("unused");
+        }
+
+        @Override
         public void upsert(PlayerProfile profile) {
             throw new UnsupportedOperationException("unused");
         }
@@ -452,6 +492,16 @@ final class RevPracStatsCommandTest {
         @Override
         public Optional<PlayerRating> find(PlayerId playerId, KitId kitId) {
             throw new IllegalStateException("rating lookup failed");
+        }
+
+        @Override
+        public List<PlayerRating> findByPlayer(PlayerId playerId) {
+            throw new UnsupportedOperationException("unused");
+        }
+
+        @Override
+        public void replaceAllForPlayer(PlayerId playerId, List<PlayerRating> replacementRatings) {
+            throw new UnsupportedOperationException("unused");
         }
 
         @Override

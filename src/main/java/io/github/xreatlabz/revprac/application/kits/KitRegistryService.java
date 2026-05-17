@@ -46,4 +46,14 @@ public final class KitRegistryService {
                 .sorted(BY_ID)
                 .toList();
     }
+
+    public void replaceAll(List<KitDefinition> kitDefinitions) {
+        Objects.requireNonNull(kitDefinitions, "kitDefinitions");
+        mutationLock.lock();
+        try {
+            kitRegistryRepository.replaceAll(List.copyOf(kitDefinitions));
+        } finally {
+            mutationLock.unlock();
+        }
+    }
 }

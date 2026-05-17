@@ -29,8 +29,10 @@ import io.github.xreatlabz.revprac.ports.matches.MatchRepository;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -46,10 +48,12 @@ public final class MatchLifecycleService {
     private final MatchPlayerPort matchPlayerPort;
     private final MatchRuleset matchRuleset;
     private final MatchSettlementService matchSettlementService;
+    private final PostMatchSummaryService postMatchSummaryService;
     private final Clock clock;
     private final MatchEventPublisher eventPublisher;
     private final AtomicBoolean intakeClosed = new AtomicBoolean(false);
     private final ReentrantLock mutationLock = new ReentrantLock();
+    private final Map<MatchId, MatchSettlementResult> retainedSettlementResults = new HashMap<>();
 
     public MatchLifecycleService(
             MatchRepository matchRepository,
@@ -67,6 +71,7 @@ public final class MatchLifecycleService {
                 matchPlayerPort,
                 matchRuleset,
                 MatchSettlementService.noOp(),
+                PostMatchSummaryService.noOp(),
                 Clock.systemUTC(),
                 eventSink);
     }
@@ -88,6 +93,30 @@ public final class MatchLifecycleService {
                 matchPlayerPort,
                 matchRuleset,
                 matchSettlementService,
+                PostMatchSummaryService.noOp(),
+                Clock.systemUTC(),
+                eventSink);
+    }
+
+    public MatchLifecycleService(
+            MatchRepository matchRepository,
+            PlayerSessionService playerSessionService,
+            ArenaRegistryService arenaRegistryService,
+            KitRegistryService kitRegistryService,
+            MatchPlayerPort matchPlayerPort,
+            MatchRuleset matchRuleset,
+            MatchSettlementService matchSettlementService,
+            PostMatchSummaryService postMatchSummaryService,
+            Consumer<MatchEvent> eventSink) {
+        this(
+                matchRepository,
+                playerSessionService,
+                arenaRegistryService,
+                kitRegistryService,
+                matchPlayerPort,
+                matchRuleset,
+                matchSettlementService,
+                postMatchSummaryService,
                 Clock.systemUTC(),
                 eventSink);
     }
@@ -102,6 +131,30 @@ public final class MatchLifecycleService {
             MatchSettlementService matchSettlementService,
             Clock clock,
             Consumer<MatchEvent> eventSink) {
+        this(
+                matchRepository,
+                playerSessionService,
+                arenaRegistryService,
+                kitRegistryService,
+                matchPlayerPort,
+                matchRuleset,
+                matchSettlementService,
+                PostMatchSummaryService.noOp(),
+                clock,
+                eventSink);
+    }
+
+    public MatchLifecycleService(
+            MatchRepository matchRepository,
+            PlayerSessionService playerSessionService,
+            ArenaRegistryService arenaRegistryService,
+            KitRegistryService kitRegistryService,
+            MatchPlayerPort matchPlayerPort,
+            MatchRuleset matchRuleset,
+            MatchSettlementService matchSettlementService,
+            PostMatchSummaryService postMatchSummaryService,
+            Clock clock,
+            Consumer<MatchEvent> eventSink) {
         this.matchRepository = Objects.requireNonNull(matchRepository, "matchRepository");
         this.playerSessionService = Objects.requireNonNull(playerSessionService, "playerSessionService");
         this.arenaRegistryService = Objects.requireNonNull(arenaRegistryService, "arenaRegistryService");
@@ -109,6 +162,7 @@ public final class MatchLifecycleService {
         this.matchPlayerPort = Objects.requireNonNull(matchPlayerPort, "matchPlayerPort");
         this.matchRuleset = Objects.requireNonNull(matchRuleset, "matchRuleset");
         this.matchSettlementService = Objects.requireNonNull(matchSettlementService, "matchSettlementService");
+        this.postMatchSummaryService = Objects.requireNonNull(postMatchSummaryService, "postMatchSummaryService");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.eventPublisher = new MatchEventPublisher(Objects.requireNonNull(eventSink, "eventSink"));
     }
@@ -346,6 +400,17 @@ public final class MatchLifecycleService {
         intakeClosed.set(true);
     }
 
+    public long activeMatchCount() {
+        mutationLock.lock();
+        try {
+            return matchRepository.findAll().stream()
+                    .filter(match -> match.state() != MatchState.COMPLETED)
+                    .count();
+        } finally {
+            mutationLock.unlock();
+        }
+    }
+
     private void transitionParticipant(PlayerId playerId, List<PlayerId> transitionedPlayers) {
         playerSessionService.transitionTo(playerId, PlayerContext.MATCH, TransitionReason.MATCH_START);
         transitionedPlayers.add(playerId);
@@ -440,11 +505,15 @@ public final class MatchLifecycleService {
         if (match.state() != MatchState.COMPLETED) {
             throw new IllegalStateException("match must be completed before teardown");
         }
-        matchSettlementService.settle(match);
-        tearDownLocked(match);
+        MatchSettlementResult settlementResult = retainedSettlementResults.get(match.id());
+        if (settlementResult == null) {
+            settlementResult = matchSettlementService.settle(match);
+            retainedSettlementResults.put(match.id(), settlementResult);
+        }
+        tearDownLocked(match, settlementResult);
     }
 
-    private void tearDownLocked(Match match) {
+    private void tearDownLocked(Match match, MatchSettlementResult settlementResult) {
         if (match.state() != MatchState.COMPLETED) {
             throw new IllegalStateException("match must be completed before teardown");
         }
@@ -483,6 +552,11 @@ public final class MatchLifecycleService {
         emit(sequence -> new MatchEvent.MatchTornDown(
                 sequence, match.id(), match.outcome().orElseThrow().reason()));
         matchRepository.delete(match.id());
+        try {
+            postMatchSummaryService.send(match, settlementResult);
+        } finally {
+            retainedSettlementResults.remove(match.id());
+        }
     }
 
     private Collection<PlayerId> allPlayers(Match match) {

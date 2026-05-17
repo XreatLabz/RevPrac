@@ -55,6 +55,28 @@ public final class ArenaRegistryService {
                 .toList();
     }
 
+    public void replaceAll(List<ArenaDefinition> arenaDefinitions) {
+        Objects.requireNonNull(arenaDefinitions, "arenaDefinitions");
+        mutationLock.lock();
+        try {
+            if (!activeReservations.isEmpty() || !resettingArenaIds.isEmpty()) {
+                throw new IllegalStateException("arena registry reload requires no active arena reservations");
+            }
+            arenaRegistryRepository.replaceAll(List.copyOf(arenaDefinitions));
+        } finally {
+            mutationLock.unlock();
+        }
+    }
+
+    public int activeReservationCount() {
+        mutationLock.lock();
+        try {
+            return activeReservations.size();
+        } finally {
+            mutationLock.unlock();
+        }
+    }
+
     public ArenaReservation reserve(ArenaId arenaId, String ownerKey) {
         Objects.requireNonNull(arenaId, "arenaId");
 

@@ -11,13 +11,27 @@ import java.util.Optional;
 
 public interface MatchSettlementRepository {
 
-    void record(MatchSettlement settlement);
+    boolean record(MatchSettlement settlement);
 
     Optional<MatchHistoryEntry> findHistory(MatchId matchId);
 
     Optional<PlayerKitStats> findStats(PlayerId playerId, KitId kitId);
 
-    default List<MatchHistoryEntry> findRecentHistory(PlayerId playerId, int limit, int offset) {
-        throw new UnsupportedOperationException("recent history is not implemented");
-    }
+    List<PlayerKitStats> findStatsByPlayer(PlayerId playerId);
+
+    List<MatchHistoryEntry> findRecentHistory(PlayerId playerId, int limit, int offset);
+
+    List<MatchHistoryEntry> findAllHistory(PlayerId playerId);
+
+    void validateImportHistoryCompatibility(PlayerId playerId, List<MatchHistoryEntry> history);
+
+    void importPlayerRecords(
+            PlayerId playerId,
+            List<PlayerKitStats> stats,
+            List<MatchHistoryEntry> history);
+
+    void restoreImportedPlayerRecords(
+            PlayerId playerId,
+            List<PlayerKitStats> stats,
+            List<MatchHistoryEntry> history);
 }

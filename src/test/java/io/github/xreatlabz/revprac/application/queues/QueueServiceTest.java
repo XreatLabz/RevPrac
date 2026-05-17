@@ -463,6 +463,16 @@ final class QueueServiceTest {
         }
 
         @Override
+        public java.util.List<PlayerRating> findByPlayer(PlayerId playerId) {
+            throw new UnsupportedOperationException("not needed for QueueService tests");
+        }
+
+        @Override
+        public void replaceAllForPlayer(PlayerId playerId, java.util.List<PlayerRating> replacementRatings) {
+            throw new UnsupportedOperationException("not needed for QueueService tests");
+        }
+
+        @Override
         public void upsert(PlayerRating rating) {
             ratings.put(new RatingKey(rating.playerId(), rating.kitId()), rating);
         }
@@ -476,6 +486,16 @@ final class QueueServiceTest {
         }
 
         @Override
+        public java.util.List<PlayerRating> findByPlayer(PlayerId playerId) {
+            throw new UnsupportedOperationException("not needed for QueueService tests");
+        }
+
+        @Override
+        public void replaceAllForPlayer(PlayerId playerId, java.util.List<PlayerRating> replacementRatings) {
+            throw new UnsupportedOperationException("not needed for QueueService tests");
+        }
+
+        @Override
         public void upsert(PlayerRating rating) {
             throw new UnsupportedOperationException("not needed for QueueService tests");
         }
@@ -486,6 +506,16 @@ final class QueueServiceTest {
         @Override
         public Optional<PlayerRating> find(PlayerId playerId, KitId kitId) {
             return Optional.empty();
+        }
+
+        @Override
+        public java.util.List<PlayerRating> findByPlayer(PlayerId playerId) {
+            throw new UnsupportedOperationException("not needed for QueueService tests");
+        }
+
+        @Override
+        public void replaceAllForPlayer(PlayerId playerId, java.util.List<PlayerRating> replacementRatings) {
+            throw new UnsupportedOperationException("not needed for QueueService tests");
         }
 
         @Override

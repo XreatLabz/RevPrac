@@ -7,6 +7,7 @@ import io.github.xreatlabz.revprac.adapters.storage.InMemoryArenaRegistryReposit
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryDuelRequestRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryKitRegistryRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryMatchRepository;
+import io.github.xreatlabz.revprac.adapters.storage.InMemoryMatchSettlementRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPendingRestorationRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionRepository;
 import io.github.xreatlabz.revprac.adapters.storage.InMemoryQueueTicketRepository;
@@ -14,6 +15,8 @@ import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
 import io.github.xreatlabz.revprac.application.matches.DuelRequestService;
 import io.github.xreatlabz.revprac.application.matches.MatchLifecycleService;
+import io.github.xreatlabz.revprac.application.matches.MatchSettlementService;
+import io.github.xreatlabz.revprac.application.matches.RematchService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
 import io.github.xreatlabz.revprac.application.queues.PlayerAvailabilityService;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaCuboid;
@@ -27,7 +30,11 @@ import io.github.xreatlabz.revprac.domain.kits.KitRules;
 import io.github.xreatlabz.revprac.domain.matches.DuelRequest;
 import io.github.xreatlabz.revprac.domain.matches.DuelRequestState;
 import io.github.xreatlabz.revprac.domain.matches.Match;
+import io.github.xreatlabz.revprac.domain.matches.MatchOrigin;
+import io.github.xreatlabz.revprac.domain.matches.MatchOutcome;
+import io.github.xreatlabz.revprac.domain.matches.MatchParticipants;
 import io.github.xreatlabz.revprac.domain.matches.MatchRuleset;
+import io.github.xreatlabz.revprac.domain.matches.MatchState;
 import io.github.xreatlabz.revprac.domain.players.InventorySnapshot;
 import io.github.xreatlabz.revprac.domain.players.LocationSnapshot;
 import io.github.xreatlabz.revprac.domain.players.PlayerContext;
@@ -37,6 +44,7 @@ import io.github.xreatlabz.revprac.domain.players.PlayerStatusSnapshot;
 import io.github.xreatlabz.revprac.ports.arenas.ArenaResetPort;
 import io.github.xreatlabz.revprac.ports.matches.MatchPlayerPort;
 import io.github.xreatlabz.revprac.ports.players.PlayerStatePort;
+import io.github.xreatlabz.revprac.domain.arenas.ArenaReservationId;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -122,18 +130,54 @@ final class RevPracDuelCommandTest {
     void duelRequestSupportsReservedPlayerNamesThroughExplicitRequestSubcommand() {
         Harness harness = new Harness();
         harness.requester.setOp(true);
-        PlayerMock reservedNameTarget = harness.server.addPlayer("accept");
+        PlayerMock reservedNameTarget = harness.server.addPlayer("rematch");
         harness.matchPlayerPort.onlinePlayers.add(new PlayerId(reservedNameTarget.getUniqueId()));
 
         harness.command.onCommand(
                 harness.requester,
                 command(),
                 "duel",
-                new String[] {"request", "accept", "arena-one", "nodebuff"});
+                new String[] {"request", "rematch", "arena-one", "nodebuff"});
 
-        assertEquals("Sent duel request to accept.", harness.requester.nextMessage());
+        assertEquals("Sent duel request to rematch.", harness.requester.nextMessage());
         DuelRequest created = harness.requestRepository.findAll().stream().findFirst().orElseThrow();
         assertEquals(new PlayerId(reservedNameTarget.getUniqueId()), created.targetId());
+    }
+
+    @Test
+    void duelRematchValidatesUsageLookupAndMissingHistory() {
+        Harness harness = new Harness();
+        harness.requester.setOp(true);
+
+        harness.command.onCommand(harness.requester, command(), "duel", new String[] {"rematch"});
+        assertEquals("Usage: /duel rematch <player>", harness.requester.nextMessage());
+
+        harness.command.onCommand(harness.requester, command(), "duel", new String[] {"rematch", "missing"});
+        assertEquals("Player not found: missing.", harness.requester.nextMessage());
+
+        harness.command.onCommand(harness.requester, command(), "duel", new String[] {"rematch", "target"});
+        assertEquals("no recent match found for rematch", harness.requester.nextMessage());
+    }
+
+    @Test
+    void duelRematchUsesTheApplicationService() {
+        Harness harness = new Harness();
+        harness.requester.setOp(true);
+        harness.recordCompletedMatch(
+                "recent-rematch",
+                MatchOrigin.QUEUE_RANKED,
+                harness.targetId(),
+                harness.requesterId(),
+                new ArenaId("arena-one"),
+                new KitId("nodebuff"),
+                Instant.parse("2026-05-01T11:59:50Z"));
+
+        harness.command.onCommand(harness.requester, command(), "duel", new String[] {"rematch", "target"});
+
+        assertEquals("Sent duel request to target.", harness.requester.nextMessage());
+        DuelRequest created = harness.requestRepository.findAll().stream().findFirst().orElseThrow();
+        assertEquals(new ArenaId("arena-one"), created.arenaId());
+        assertEquals(new KitId("nodebuff"), created.kitId());
     }
 
     @Test
@@ -218,6 +262,7 @@ final class RevPracDuelCommandTest {
         private final WorldMock world = addKeyedWorld(server, "match-world");
         private final InMemoryDuelRequestRepository requestRepository = new InMemoryDuelRequestRepository();
         private final InMemoryMatchRepository matchRepository = new InMemoryMatchRepository();
+        private final InMemoryMatchSettlementRepository settlementRepository = new InMemoryMatchSettlementRepository();
         private final InMemoryQueueTicketRepository queueTicketRepository = new InMemoryQueueTicketRepository();
         private final InMemoryPlayerSessionRepository sessionRepository = new InMemoryPlayerSessionRepository();
         private final PlayerSessionService playerSessionService =
@@ -249,11 +294,16 @@ final class RevPracDuelCommandTest {
                 Duration.ofSeconds(30),
                 event -> {
                 });
+        private final RematchService rematchService = new RematchService(
+                settlementRepository,
+                duelRequestService,
+                Clock.fixed(Instant.parse("2026-05-01T12:00:00Z"), ZoneOffset.UTC),
+                Duration.ofSeconds(30));
         private final PlayerMock requester = server.addPlayer("requester");
         private final PlayerMock target = server.addPlayer("target");
         private final PlayerMock spectator = server.addPlayer("spectator");
         private final RevPracDuelCommand command =
-                new RevPracDuelCommand(server, duelRequestService, matchLifecycleService);
+                new RevPracDuelCommand(server, duelRequestService, rematchService, matchLifecycleService);
 
         private Harness() {
             arenaRegistryService.register(new ArenaDefinition(
@@ -285,6 +335,31 @@ final class RevPracDuelCommandTest {
 
         private PlayerId spectatorId() {
             return new PlayerId(spectator.getUniqueId());
+        }
+
+        private void recordCompletedMatch(
+                String seed,
+                MatchOrigin origin,
+                PlayerId firstPlayer,
+                PlayerId secondPlayer,
+                ArenaId arenaId,
+                KitId kitId,
+                Instant completedAt) {
+            Match match = new Match(
+                    new io.github.xreatlabz.revprac.domain.matches.MatchId(UUID.nameUUIDFromBytes(seed.getBytes())),
+                    new MatchParticipants(firstPlayer, secondPlayer),
+                    arenaId,
+                    kitId,
+                    origin,
+                    new ArenaReservationId(UUID.nameUUIDFromBytes((seed + "-reservation").getBytes())),
+                    new MatchRuleset(1, 200, true),
+                    MatchState.COMPLETED,
+                    0,
+                    10,
+                    Set.of(),
+                    java.util.Optional.of(MatchOutcome.win(firstPlayer, secondPlayer)),
+                    java.util.Optional.of(completedAt));
+            new MatchSettlementService(settlementRepository).settle(match);
         }
     }
 

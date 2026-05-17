@@ -9,6 +9,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.Objects;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.configuration.FluentConfiguration;
 
 public final class JdbcStorageFactory {
 
@@ -19,12 +20,40 @@ public final class JdbcStorageFactory {
         Objects.requireNonNull(dataFolder, "dataFolder");
         Objects.requireNonNull(storageConfig, "storageConfig");
 
+        try {
+            Files.createDirectories(dataFolder);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to prepare plugin data folder: " + dataFolder, exception);
+        }
+
+        if (StorageConfig.SQLITE_BACKEND.equals(storageConfig.backend())) {
+            return createSqliteStorage(dataFolder, storageConfig);
+        }
+        if (StorageConfig.POSTGRESQL_BACKEND.equals(storageConfig.backend())) {
+            return createPostgresqlStorage(dataFolder, storageConfig);
+        }
+        throw new IllegalStateException("Unsupported storage backend: " + storageConfig.backend());
+    }
+
+    private static JdbcStorageRuntime createSqliteStorage(Path dataFolder, StorageConfig storageConfig) {
         Path databasePath = resolveDatabasePath(dataFolder, storageConfig.sqlitePath());
-        prepareDirectories(dataFolder, databasePath);
+        prepareSqliteDirectories(databasePath);
 
         HikariDataSource dataSource = createSqliteDataSource(databasePath, storageConfig.poolMaximumSize());
         try {
-            migrate(dataSource, databasePath);
+            migrateSqlite(dataSource, databasePath);
+            return new JdbcStorageRuntime(dataSource);
+        } catch (RuntimeException exception) {
+            dataSource.close();
+            throw exception;
+        }
+    }
+
+    private static JdbcStorageRuntime createPostgresqlStorage(Path dataFolder, StorageConfig storageConfig) {
+        StorageConfig.PostgreSqlConfig postgresql = Objects.requireNonNull(storageConfig.postgresql(), "postgresql");
+        HikariDataSource dataSource = createPostgresqlDataSource(postgresql, storageConfig.poolMaximumSize());
+        try {
+            migratePostgresql(dataSource, postgresql);
             return new JdbcStorageRuntime(dataSource);
         } catch (RuntimeException exception) {
             dataSource.close();
@@ -49,9 +78,8 @@ public final class JdbcStorageFactory {
         }
     }
 
-    private static void prepareDirectories(Path dataFolder, Path databasePath) {
+    private static void prepareSqliteDirectories(Path databasePath) {
         try {
-            Files.createDirectories(dataFolder);
             Path parent = databasePath.getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
@@ -72,15 +100,53 @@ public final class JdbcStorageFactory {
         return new HikariDataSource(hikariConfig);
     }
 
-    private static void migrate(HikariDataSource dataSource, Path databasePath) {
+    private static HikariDataSource createPostgresqlDataSource(
+            StorageConfig.PostgreSqlConfig postgresql,
+            int maximumPoolSize) {
+        HikariConfig hikariConfig = new HikariConfig();
+        hikariConfig.setPoolName("revprac-postgresql");
+        hikariConfig.setJdbcUrl(postgresql.jdbcUrl());
+        hikariConfig.setDriverClassName("org.postgresql.Driver");
+        hikariConfig.setUsername(postgresql.username());
+        hikariConfig.setPassword(postgresql.password());
+        hikariConfig.setMaximumPoolSize(maximumPoolSize);
+        hikariConfig.setMinimumIdle(1);
+        if (postgresql.schema() != null) {
+            hikariConfig.setSchema(postgresql.schema());
+            hikariConfig.addDataSourceProperty("currentSchema", postgresql.schema());
+        }
+        return new HikariDataSource(hikariConfig);
+    }
+
+    private static void migrateSqlite(HikariDataSource dataSource, Path databasePath) {
         try {
-            Flyway.configure()
+            Flyway.configure(JdbcStorageFactory.class.getClassLoader())
                     .dataSource(dataSource)
-                    .locations("classpath:db/migration")
+                    .locations("classpath:db/migration/sqlite")
                     .load()
                     .migrate();
         } catch (RuntimeException exception) {
             throw new IllegalStateException("Failed to migrate sqlite storage at " + databasePath, exception);
+        }
+    }
+
+    private static void migratePostgresql(
+            HikariDataSource dataSource,
+            StorageConfig.PostgreSqlConfig postgresql) {
+        try {
+            FluentConfiguration configuration = Flyway.configure(JdbcStorageFactory.class.getClassLoader())
+                    .dataSource(dataSource)
+                    .locations("classpath:db/migration/postgresql")
+                    .createSchemas(true);
+            if (postgresql.schema() != null) {
+                configuration.schemas(postgresql.schema());
+                configuration.defaultSchema(postgresql.schema());
+            }
+            configuration.load().migrate();
+        } catch (RuntimeException exception) {
+            throw new IllegalStateException(
+                    "Failed to migrate postgresql storage at " + postgresql.jdbcUrl(),
+                    exception);
         }
     }
 }

@@ -8,16 +8,18 @@ api-version: '1.21.11'
 libraries:
   - com.zaxxer:HikariCP:7.0.2
   - org.flywaydb:flyway-core:12.5.0
+  - org.flywaydb:flyway-database-postgresql:12.5.0
+  - org.postgresql:postgresql:42.7.11
   - org.xerial:sqlite-jdbc:3.53.0.0
 commands:
   revprac:
-    description: RevPrac admin setup commands.
-    usage: /revprac <arena|kit> ...
+    description: RevPrac admin setup, diagnostics, reload, season, metrics, integrations, and audit commands.
+    usage: /revprac <arena|kit|status|reload|season|metrics|integrations|audit> ...
     permission: revprac.admin
     permission-message: You do not have permission to use this command.
   duel:
     description: RevPrac duel request, accept, deny, cancel, spectate, and forfeit commands.
-    usage: /duel <player> <arena> <kit>|request <player> <arena> <kit>|accept <player>|deny <player>|cancel <player>|spectate <player>|forfeit
+    usage: /duel <player> <arena> <kit>|request <player> <arena> <kit>|rematch <player>|accept <player>|deny <player>|cancel <player>|spectate <player>|forfeit
     permission: revprac.duel
     permission-message: You do not have permission to use this command.
   queue:
@@ -30,9 +32,14 @@ commands:
     usage: /stats summary <kit>|history [page]
     permission: revprac.stats
     permission-message: You do not have permission to use this command.
+  records:
+    description: RevPrac cross-player records lookup plus import and export commands.
+    usage: /records summary <player> <kit>|history <player> [page]|export <player>|import <file>
+    permission: revprac.records
+    permission-message: You do not have permission to use this command.
 permissions:
   revprac.admin:
-    description: Allows RevPrac arena and kit setup commands.
+    description: Allows RevPrac setup and staff operations commands.
     default: op
   revprac.duel:
     description: Allows RevPrac duel and spectate commands.
@@ -43,3 +50,12 @@ permissions:
   revprac.stats:
     description: Allows RevPrac stats commands.
     default: true
+  revprac.records:
+    description: Allows use of the /records command.
+    default: op
+  revprac.records.lookup:
+    description: Allows cross-player /records summary and history lookups.
+    default: op
+  revprac.records.transfer:
+    description: Allows /records import and export transfers.
+    default: op

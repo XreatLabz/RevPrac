@@ -66,6 +66,12 @@ public final class LoadValidatedConfigService {
         if (hasMalformedStorageParent(source)) {
             return err("configuration.invalid-type", "Expected a configuration section at storage", "storage");
         }
+        if (hasMalformedStoragePostgresqlParent(source)) {
+            return err(
+                    "configuration.invalid-type",
+                    "Expected a configuration section at storage.postgresql",
+                    "storage.postgresql");
+        }
 
         ParsedPositiveInt duelRequestExpirySeconds = readPositiveIntWithDefault(
                 source,
@@ -198,6 +204,11 @@ public final class LoadValidatedConfigService {
         return storageValue.present() && !isSectionLikeConfigValue(storageValue.value());
     }
 
+    private boolean hasMalformedStoragePostgresqlParent(ConfigSource source) {
+        LookupValue postgresqlValue = read(source, "storage.postgresql");
+        return postgresqlValue.present() && !isSectionLikeConfigValue(postgresqlValue.value());
+    }
+
     private Result<QueueConfig> readQueueConfig(ConfigSource source) {
         ParsedPositiveInt matchmakingPeriodTicks = readPositiveIntWithDefault(
                 source,
@@ -304,23 +315,12 @@ public final class LoadValidatedConfigService {
         }
 
         String normalizedBackend = backend.value().trim().toLowerCase(Locale.ROOT);
-        if (!StorageConfig.SQLITE_BACKEND.equals(normalizedBackend)) {
+        if (!StorageConfig.SQLITE_BACKEND.equals(normalizedBackend)
+                && !StorageConfig.POSTGRESQL_BACKEND.equals(normalizedBackend)) {
             return new Err<>(problem(
                     "configuration.invalid-value",
-                    "Unsupported storage backend " + backend.value() + "; expected " + StorageConfig.SQLITE_BACKEND,
+                    "Unsupported storage backend " + backend.value() + "; expected sqlite or postgresql",
                     "storage.backend"));
-        }
-
-        ParsedString sqlitePath =
-                readStringWithDefault(source, "storage.sqlite-path", StorageConfig.DEFAULT_SQLITE_PATH);
-        if (!sqlitePath.valid()) {
-            return new Err<>(problem(sqlitePath.code(), sqlitePath.message(), sqlitePath.path()));
-        }
-        if (sqlitePath.value().isBlank()) {
-            return new Err<>(problem(
-                    "configuration.invalid-value",
-                    "Expected a non-blank string at storage.sqlite-path",
-                    "storage.sqlite-path"));
         }
 
         ParsedPositiveInt poolMaximumSize = readPositiveIntWithDefault(
@@ -331,7 +331,58 @@ public final class LoadValidatedConfigService {
             return new Err<>(problem(poolMaximumSize.code(), poolMaximumSize.message(), poolMaximumSize.path()));
         }
 
-        return new Ok<>(new StorageConfig(normalizedBackend, sqlitePath.value(), poolMaximumSize.value()));
+        String sqlitePath = null;
+        if (StorageConfig.SQLITE_BACKEND.equals(normalizedBackend)) {
+            ParsedString sqlitePathValue =
+                    readStringWithDefault(source, "storage.sqlite-path", StorageConfig.DEFAULT_SQLITE_PATH);
+            if (!sqlitePathValue.valid()) {
+                return new Err<>(problem(sqlitePathValue.code(), sqlitePathValue.message(), sqlitePathValue.path()));
+            }
+            if (sqlitePathValue.value().isBlank()) {
+                return new Err<>(problem(
+                        "configuration.invalid-value",
+                        "Expected a non-blank string at storage.sqlite-path",
+                        "storage.sqlite-path"));
+            }
+            sqlitePath = sqlitePathValue.value();
+        } else {
+            ParsedOptionalString sqlitePathValue = readOptionalString(source, "storage.sqlite-path");
+            if (!sqlitePathValue.valid()) {
+                return new Err<>(problem(sqlitePathValue.code(), sqlitePathValue.message(), sqlitePathValue.path()));
+            }
+            sqlitePath = sqlitePathValue.value();
+        }
+
+        StorageConfig.PostgreSqlConfig postgresql = null;
+        if (StorageConfig.POSTGRESQL_BACKEND.equals(normalizedBackend)) {
+            ParsedString jdbcUrl = readRequiredString(source, "storage.postgresql.jdbc-url");
+            if (!jdbcUrl.valid()) {
+                return new Err<>(problem(jdbcUrl.code(), jdbcUrl.message(), jdbcUrl.path()));
+            }
+
+            ParsedString username = readRequiredString(source, "storage.postgresql.username");
+            if (!username.valid()) {
+                return new Err<>(problem(username.code(), username.message(), username.path()));
+            }
+
+            ParsedString password = readRequiredString(source, "storage.postgresql.password");
+            if (!password.valid()) {
+                return new Err<>(problem(password.code(), password.message(), password.path()));
+            }
+
+            ParsedOptionalString schema = readOptionalString(source, "storage.postgresql.schema");
+            if (!schema.valid()) {
+                return new Err<>(problem(schema.code(), schema.message(), schema.path()));
+            }
+
+            postgresql = new StorageConfig.PostgreSqlConfig(
+                    jdbcUrl.value(),
+                    username.value(),
+                    password.value(),
+                    schema.value());
+        }
+
+        return new Ok<>(new StorageConfig(normalizedBackend, sqlitePath, postgresql, poolMaximumSize.value()));
     }
 
     private boolean isSectionLikeConfigValue(Object value) {
@@ -377,6 +428,9 @@ public final class LoadValidatedConfigService {
     private record ParsedString(boolean valid, String value, String code, String message, String path) {
     }
 
+    private record ParsedOptionalString(boolean valid, String value, String code, String message, String path) {
+    }
+
     private ParsedString readStringWithDefault(ConfigSource source, String path, String defaultValue) {
         LookupValue value = read(source, path);
         if (!value.present()) {
@@ -386,6 +440,46 @@ public final class LoadValidatedConfigService {
             return new ParsedString(true, stringValue, null, null, path);
         }
         return new ParsedString(false, null, "configuration.invalid-type", "Expected a string at " + path, path);
+    }
+
+    private ParsedString readRequiredString(ConfigSource source, String path) {
+        LookupValue value = read(source, path);
+        if (!value.present()) {
+            return new ParsedString(
+                    false,
+                    null,
+                    "configuration.missing",
+                    "Expected a non-blank string at " + path,
+                    path);
+        }
+        if (!(value.value() instanceof String stringValue)) {
+            return new ParsedString(
+                    false,
+                    null,
+                    "configuration.invalid-type",
+                    "Expected a non-blank string at " + path,
+                    path);
+        }
+        if (stringValue.isBlank()) {
+            return new ParsedString(
+                    false,
+                    null,
+                    "configuration.invalid-value",
+                    "Expected a non-blank string at " + path,
+                    path);
+        }
+        return new ParsedString(true, stringValue, null, null, path);
+    }
+
+    private ParsedOptionalString readOptionalString(ConfigSource source, String path) {
+        LookupValue value = read(source, path);
+        if (!value.present()) {
+            return new ParsedOptionalString(true, null, null, null, path);
+        }
+        if (value.value() instanceof String stringValue) {
+            return new ParsedOptionalString(true, stringValue, null, null, path);
+        }
+        return new ParsedOptionalString(false, null, "configuration.invalid-type", "Expected a string at " + path, path);
     }
 
     private ParsedPositiveInt readPositiveInt(Object rawValue, String path) {

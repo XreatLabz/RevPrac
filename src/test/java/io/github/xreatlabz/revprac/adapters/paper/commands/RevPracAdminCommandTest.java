@@ -68,6 +68,69 @@ final class RevPracAdminCommandTest {
     }
 
     @Test
+    void statusMetricsAndIntegrationsCommandsExposeStaffDiagnostics() {
+        ServerMock server = MockBukkit.mock();
+        server.addSimpleWorld("status-world");
+        RevPracPlugin plugin = MockBukkit.load(RevPracPlugin.class);
+        PlayerMock player = server.addPlayer("status-admin");
+        player.setOp(true);
+
+        CommandResult status = server.execute("revprac", player, "status");
+        CommandResult metrics = server.execute("revprac", player, "metrics");
+        CommandResult integrations = server.execute("revprac", player, "integrations");
+
+        status.assertResponse(
+                "RevPrac status: backend=sqlite season=default arenas=0 kits=0 reservations=0 queues=0 matches=0 pending-duels=0 events=0");
+        metrics.assertResponse("Metrics: events=0 duel-requests=0 completed-matches=0 torn-down-matches=0");
+        integrations.assertResponse(
+                "Integrations: SCOREBOARD/FastBoard=absent, PLACEHOLDER/PlaceholderAPI=absent, TAB/TAB=absent, COMBAT_LOG/CombatLogX=absent, PARTY/RevPrac=present");
+    }
+
+    @Test
+    void registryReloadRequiresNoActiveReservationsAndSwapsValidatedYaml() throws Exception {
+        ServerMock server = MockBukkit.mock();
+        WorldMock world = addKeyedWorld(server, "reload-world");
+        RevPracPlugin plugin = MockBukkit.load(RevPracPlugin.class);
+        PlayerMock player = server.addPlayer("reload-admin");
+        player.setOp(true);
+        player.teleport(new Location(world, 0.0d, 64.0d, 0.0d));
+
+        server.execute("revprac", player, "arena", "create", "bridge", "8").assertResponse("Saved arena bridge.");
+        var reservation = arenaService(plugin).reserve(arenaService(plugin).arenas().getFirst().id(), "test");
+        server.execute("revprac", player, "reload", "registries")
+                .assertResponse("registry reload requires no active queue tickets, matches, or arena reservations");
+        arenaService(plugin).release(reservation.reservationId());
+
+        server.execute("revprac", player, "reload", "registries")
+                .assertResponse("Reloaded registries: arenas=1 kits=0.");
+    }
+
+    @Test
+    void seasonCommandsCreateListAndActivateLogicalSeasons() {
+        ServerMock server = MockBukkit.mock();
+        server.addSimpleWorld("season-world");
+        RevPracPlugin plugin = MockBukkit.load(RevPracPlugin.class);
+        PlayerMock player = server.addPlayer("season-admin");
+        player.setOp(true);
+
+        server.execute("revprac", player, "season", "list")
+                .assertResponse("Seasons: default(active)");
+        server.execute("revprac", player, "season", "create", "beta")
+                .assertResponse("Created season beta.");
+        server.execute("revprac", player, "season", "activate", "beta")
+                .assertResponse("Activated season beta.");
+
+        assertEquals("beta", runtime(plugin).storageRuntime()
+                .seasonRepository()
+                .findActive()
+                .orElseThrow()
+                .id()
+                .value());
+        server.execute("revprac", player, "season", "list")
+                .assertResponse("Seasons: default, beta(active)");
+    }
+
+    @Test
     void arenaCreateRequiresPlayerCapturesLocationAndPersistsArena() throws Exception {
         ServerMock server = MockBukkit.mock();
         WorldMock world = addKeyedWorld(server, "arena-world");

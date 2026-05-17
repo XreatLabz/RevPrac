@@ -416,7 +416,7 @@ final class PlayerRecordQueryServiceTest {
         private boolean failHistoryLookup;
 
         @Override
-        public void record(io.github.xreatlabz.revprac.domain.stats.MatchSettlement settlement) {
+        public boolean record(io.github.xreatlabz.revprac.domain.stats.MatchSettlement settlement) {
             throw new UnsupportedOperationException("not needed");
         }
 
@@ -445,6 +445,32 @@ final class PlayerRecordQueryServiceTest {
                     .limit(limit)
                     .toList();
         }
+
+        @Override
+        public List<PlayerKitStats> findStatsByPlayer(PlayerId playerId) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
+        public List<MatchHistoryEntry> findAllHistory(PlayerId playerId) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
+        public void validateImportHistoryCompatibility(PlayerId playerId, List<MatchHistoryEntry> history) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
+        public void importPlayerRecords(PlayerId playerId, List<PlayerKitStats> stats, List<MatchHistoryEntry> history) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
+        public void restoreImportedPlayerRecords(
+                PlayerId playerId, List<PlayerKitStats> stats, List<MatchHistoryEntry> history) {
+            throw new UnsupportedOperationException("not needed");
+        }
     }
 
     private static final class FakePlayerRatingRepository implements PlayerRatingRepository {
@@ -457,6 +483,16 @@ final class PlayerRecordQueryServiceTest {
                 throw new IllegalStateException("ratings unavailable");
             }
             return Optional.ofNullable(ratings.get(new RatingKey(playerId, kitId)));
+        }
+
+        @Override
+        public List<PlayerRating> findByPlayer(PlayerId playerId) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
+        public void replaceAllForPlayer(PlayerId playerId, List<PlayerRating> replacementRatings) {
+            throw new UnsupportedOperationException("not needed");
         }
 
         @Override
@@ -475,6 +511,21 @@ final class PlayerRecordQueryServiceTest {
                 throw new IllegalStateException("profiles unavailable");
             }
             return Optional.ofNullable(profiles.get(playerId));
+        }
+
+        @Override
+        public List<PlayerProfile> findByLastKnownNameIgnoreCase(String lastKnownName) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
+        public void delete(PlayerId playerId) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
+        public void restoreExact(PlayerProfile profile) {
+            profiles.put(profile.playerId(), profile);
         }
 
         @Override
@@ -497,6 +548,11 @@ final class PlayerRecordQueryServiceTest {
 
         @Override
         public boolean create(KitDefinition kitDefinition) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
+        public void replaceAll(java.util.List<KitDefinition> kitDefinitions) {
             throw new UnsupportedOperationException("not needed");
         }
 

@@ -78,6 +78,7 @@ final class LoadValidatedConfigServiceContractTest {
         assertTrue(storageConfig.getClass().isRecord(), "StorageConfig should be an immutable record");
         assertEquals("sqlite", readAccessor(storageConfig, "backend"));
         assertEquals("custom/revprac.db", readAccessor(storageConfig, "sqlitePath"));
+        assertEquals(null, readAccessor(storageConfig, "postgresql"));
         assertEquals(8, readAccessor(storageConfig, "poolMaximumSize"));
     }
 
@@ -106,6 +107,7 @@ final class LoadValidatedConfigServiceContractTest {
         Object storageConfig = readAccessor(config, "storage");
         assertEquals("sqlite", readAccessor(storageConfig, "backend"));
         assertEquals("data/revprac.db", readAccessor(storageConfig, "sqlitePath"));
+        assertEquals(null, readAccessor(storageConfig, "postgresql"));
         assertEquals(4, readAccessor(storageConfig, "poolMaximumSize"));
     }
 
@@ -131,7 +133,63 @@ final class LoadValidatedConfigServiceContractTest {
         Object storageConfig = readAccessor(config, "storage");
         assertEquals("sqlite", readAccessor(storageConfig, "backend"));
         assertEquals("data/revprac.db", readAccessor(storageConfig, "sqlitePath"));
+        assertEquals(null, readAccessor(storageConfig, "postgresql"));
         assertEquals(4, readAccessor(storageConfig, "poolMaximumSize"));
+    }
+
+    @Test
+    void postgresqlStorageConfigParsesWithOptionalSchema() {
+        Result<RevPracConfig> result = service.load(new MapConfigSource(Map.ofEntries(
+                Map.entry("config-version", 1),
+                Map.entry("storage.backend", "postgresql"),
+                Map.entry("storage.postgresql.jdbc-url", "jdbc:postgresql://localhost:5432/revprac"),
+                Map.entry("storage.postgresql.username", "revprac"),
+                Map.entry("storage.postgresql.password", "secret"),
+                Map.entry("storage.postgresql.schema", "practice"),
+                Map.entry("storage.pool-maximum-size", 6))));
+
+        RevPracConfig config = assertOk(result);
+        Object storageConfig = readAccessor(config, "storage");
+        Object postgresql = readAccessor(storageConfig, "postgresql");
+
+        assertEquals("postgresql", readAccessor(storageConfig, "backend"));
+        assertEquals(null, readAccessor(storageConfig, "sqlitePath"));
+        assertEquals(6, readAccessor(storageConfig, "poolMaximumSize"));
+        assertTrue(postgresql.getClass().isRecord(), "PostgreSqlConfig should be an immutable record");
+        assertEquals("jdbc:postgresql://localhost:5432/revprac", readAccessor(postgresql, "jdbcUrl"));
+        assertEquals("revprac", readAccessor(postgresql, "username"));
+        assertEquals("secret", readAccessor(postgresql, "password"));
+        assertEquals("practice", readAccessor(postgresql, "schema"));
+    }
+
+    @Test
+    void postgresqlStorageConfigAllowsMissingOrBlankSqlitePath() {
+        RevPracConfig missingSqlitePath = assertOk(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "storage.backend", "postgresql",
+                "storage.postgresql.jdbc-url", "jdbc:postgresql://localhost:5432/revprac",
+                "storage.postgresql.username", "revprac",
+                "storage.postgresql.password", "secret"))));
+        RevPracConfig blankSqlitePath = assertOk(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "storage.backend", "postgresql",
+                "storage.sqlite-path", "   ",
+                "storage.postgresql.jdbc-url", "jdbc:postgresql://localhost:5432/revprac",
+                "storage.postgresql.username", "revprac",
+                "storage.postgresql.password", "secret"))));
+
+        assertEquals(null, readAccessor(readAccessor(missingSqlitePath, "storage"), "sqlitePath"));
+        assertEquals(null, readAccessor(readAccessor(blankSqlitePath, "storage"), "sqlitePath"));
+    }
+
+    @Test
+    void sqliteStorageConfigRejectsBlankSqlitePath() {
+        Problem problem = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "storage.backend", "sqlite",
+                "storage.sqlite-path", "   "))));
+
+        assertEquals("storage.sqlite-path", problem.path());
     }
 
     @Test
@@ -252,12 +310,30 @@ final class LoadValidatedConfigServiceContractTest {
     void invalidStorageBackendReturnsProblemNamingExactPath() {
         Result<RevPracConfig> result = service.load(new MapConfigSource(Map.of(
                 "config-version", 1,
-                "storage.backend", "postgresql")));
+                "storage.backend", "mysql")));
 
         Problem problem = assertErr(result);
 
         assertEquals(ProblemCategory.CONFIGURATION, problem.category());
         assertEquals("storage.backend", problem.path());
+    }
+
+    @Test
+    void missingPostgresqlFieldsReturnProblemsNamingExactPaths() {
+        Problem missingJdbcUrl = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "storage.backend", "postgresql",
+                "storage.postgresql.username", "revprac",
+                "storage.postgresql.password", "secret"))));
+        Problem blankUsername = assertErr(service.load(new MapConfigSource(Map.of(
+                "config-version", 1,
+                "storage.backend", "postgresql",
+                "storage.postgresql.jdbc-url", "jdbc:postgresql://localhost:5432/revprac",
+                "storage.postgresql.username", "   ",
+                "storage.postgresql.password", "secret"))));
+
+        assertEquals("storage.postgresql.jdbc-url", missingJdbcUrl.path());
+        assertEquals("storage.postgresql.username", blankUsername.path());
     }
 
     @Test
@@ -370,23 +446,57 @@ final class LoadValidatedConfigServiceContractTest {
         Object defaults = storageConfigType.getMethod("defaults").invoke(null);
         assertEquals("sqlite", storageConfigType.getMethod("backend").invoke(defaults));
         assertEquals("data/revprac.db", storageConfigType.getMethod("sqlitePath").invoke(defaults));
+        assertEquals(null, storageConfigType.getMethod("postgresql").invoke(defaults));
         assertEquals(4, storageConfigType.getMethod("poolMaximumSize").invoke(defaults));
+
+        Class<?> postgresqlConfigType = Class.forName(STORAGE_CONFIG_TYPE + "$PostgreSqlConfig");
+        Object postgresqlConfig = postgresqlConfigType
+                .getDeclaredConstructor(String.class, String.class, String.class, String.class)
+                .newInstance(
+                        "jdbc:postgresql://localhost:5432/revprac",
+                        "revprac",
+                        "secret",
+                        "practice");
 
         assertInstanceOf(
                 IllegalArgumentException.class,
                 assertThrows(
                                 InvocationTargetException.class,
                                 () -> storageConfigType
-                                        .getDeclaredConstructor(String.class, String.class, int.class)
-                                        .newInstance("postgresql", "data/revprac.db", 4))
+                                        .getDeclaredConstructor(String.class, String.class, postgresqlConfigType, int.class)
+                                        .newInstance("mysql", "data/revprac.db", null, 4))
                         .getCause());
         assertInstanceOf(
                 IllegalArgumentException.class,
                 assertThrows(
                                 InvocationTargetException.class,
                                 () -> storageConfigType
-                                        .getDeclaredConstructor(String.class, String.class, int.class)
-                                        .newInstance("sqlite", "data/revprac.db", 0))
+                                        .getDeclaredConstructor(String.class, String.class, postgresqlConfigType, int.class)
+                                        .newInstance("sqlite", "data/revprac.db", null, 0))
+                        .getCause());
+        assertInstanceOf(
+                IllegalArgumentException.class,
+                assertThrows(
+                                InvocationTargetException.class,
+                                () -> storageConfigType
+                                        .getDeclaredConstructor(String.class, String.class, postgresqlConfigType, int.class)
+                                        .newInstance("postgresql", null, null, 4))
+                        .getCause());
+        Object postgresqlWithoutSqlitePath = storageConfigType
+                .getDeclaredConstructor(String.class, String.class, postgresqlConfigType, int.class)
+                .newInstance("postgresql", "   ", postgresqlConfig, 4);
+        assertEquals("postgresql", storageConfigType.getMethod("backend").invoke(postgresqlWithoutSqlitePath));
+        assertEquals(null, storageConfigType.getMethod("sqlitePath").invoke(postgresqlWithoutSqlitePath));
+        assertEquals(
+                "practice",
+                postgresqlConfigType.getMethod("schema").invoke(postgresqlConfig));
+        assertInstanceOf(
+                IllegalArgumentException.class,
+                assertThrows(
+                                InvocationTargetException.class,
+                                () -> postgresqlConfigType
+                                        .getDeclaredConstructor(String.class, String.class, String.class, String.class)
+                                        .newInstance("jdbc:postgresql://localhost:5432/revprac", " ", "secret", "practice"))
                         .getCause());
     }
 

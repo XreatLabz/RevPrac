@@ -2,6 +2,7 @@ package io.github.xreatlabz.revprac.adapters.paper.players;
 
 import io.github.xreatlabz.revprac.application.players.PlayerProfileService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
+import io.github.xreatlabz.revprac.application.recovery.RuntimeRecoveryService;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
 import java.time.Clock;
 import java.util.Objects;
@@ -17,10 +18,11 @@ public final class PaperPlayerSessionListener implements Listener {
     private final Plugin plugin;
     private final PlayerSessionService playerSessionService;
     private final PlayerProfileService playerProfileService;
+    private final RuntimeRecoveryService runtimeRecoveryService;
     private final Clock clock;
 
     public PaperPlayerSessionListener(Plugin plugin, PlayerSessionService playerSessionService) {
-        this(plugin, playerSessionService, null, Clock.systemUTC());
+        this(plugin, playerSessionService, null, null, Clock.systemUTC());
     }
 
     public PaperPlayerSessionListener(
@@ -28,9 +30,19 @@ public final class PaperPlayerSessionListener implements Listener {
             PlayerSessionService playerSessionService,
             PlayerProfileService playerProfileService,
             Clock clock) {
+        this(plugin, playerSessionService, playerProfileService, null, clock);
+    }
+
+    public PaperPlayerSessionListener(
+            Plugin plugin,
+            PlayerSessionService playerSessionService,
+            PlayerProfileService playerProfileService,
+            RuntimeRecoveryService runtimeRecoveryService,
+            Clock clock) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.playerSessionService = Objects.requireNonNull(playerSessionService, "playerSessionService");
         this.playerProfileService = playerProfileService;
+        this.runtimeRecoveryService = runtimeRecoveryService;
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -47,6 +59,9 @@ public final class PaperPlayerSessionListener implements Listener {
                 playerSessionService.join(playerId);
                 if (playerProfileService != null) {
                     playerProfileService.touch(playerId, player.getName(), clock.instant());
+                }
+                if (runtimeRecoveryService != null) {
+                    runtimeRecoveryService.recoverPlayer(playerId);
                 }
             }
         });

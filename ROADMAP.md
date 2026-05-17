@@ -36,11 +36,14 @@ RevPrac currently has:
 - JUnit Jupiter 6.0.3 and MockBukkit for plugin load/enable tests
 - `scripts/smoke-run-paper.sh` for a real Paper boot smoke check
 
-Current repo shape is intentionally small:
+Current repo shape is intentionally staged:
 
-- arena and kit registry groundwork exists; the direct duel, queue matchmaking, and match engine are implemented; Phase 6A durable player profile and rating storage is implemented; Phase 6B durable match history and per-player per-kit stats are implemented; Phase 6C ranked progression and self-facing `/stats` queries are implemented; seasons, PostgreSQL, import/export, rematch, post-match summaries, offline/cross-player lookup, active match recovery, active queue recovery, and season partitioning remain planned
+- arena and kit registry groundwork exists; the direct duel, queue matchmaking, and match engine are implemented; durable player profiles, ratings, match history, per-player per-kit stats, logical seasons, player record lookup/transfer, rematch, post-match summaries, and runtime recovery sidecars are implemented; storage supports SQLite plus optional PostgreSQL, ratings/history/stats are scoped by the current logical active season, and managed player sessions, pending restorations, queue tickets, and active match shells are mirrored to recovery tables
+- staff operations now expose diagnostics, safe registry reloads, integration presence checks, audit reads, metrics reads, and season lifecycle commands through `/revprac`
+- public plugin-facing match lifecycle events are exposed as Bukkit events with an explicit contract version
+- Phase 8 base hardening includes durable audit rows, lightweight operational metrics, season admin rollover, a minimal in-memory party service, and a minimal in-memory tournament service
 - no Gradle subprojects yet
-- no public plugin API surface yet
+- physical PostgreSQL season partitioning remains deferred until there is evidence it is needed
 
 ## Product North Star
 
@@ -318,33 +321,35 @@ Validation:
 
 ### Phase 6: Persistence, Ratings, and Migrations
 
-Status: Implemented for Phase 6A, Phase 6B, and Phase 6C
+Status: Implemented
 
 Goal:
 
-- introduce the first durable persistence slices for RevPrac: storage config, SQLite-backed migrations, durable player profiles, durable queue rating seeds, completed match history, basic per-player per-kit stats, ranked rating progression, and a self-facing stats query surface
+- introduce the first durable persistence slices for RevPrac: backend-aware storage config, SQLite plus optional PostgreSQL migrations, durable player profiles, durable queue rating seeds, completed match history, basic per-player per-kit stats, logical active-season scoping, ranked rating progression, and player-record query plus transfer surfaces
 
 Implemented scope:
 
-- `application.config.StorageConfig` owns `storage.backend`, `storage.sqlite-path`, and `storage.pool-maximum-size`
-- `plugin.yml` declares the runtime libraries for `com.zaxxer:HikariCP:7.0.2`, `org.flywaydb:flyway-core:12.5.0`, and `org.xerial:sqlite-jdbc:3.53.0.0`
-- `JdbcStorageFactory` resolves the SQLite path, creates parent directories, opens HikariCP, runs Flyway migrations from `classpath:db/migration`, and only then exposes repositories
-- `JdbcStorageRuntime` exposes JDBC-backed player profile, player rating, and match settlement repositories
+- `application.config.StorageConfig` owns `storage.backend`, backend-specific path/connection settings, and `storage.pool-maximum-size`
+- `plugin.yml` declares the runtime libraries for `com.zaxxer:HikariCP:7.0.2`, `org.flywaydb:flyway-core:12.5.0`, `org.flywaydb:flyway-database-postgresql:12.5.0`, `org.postgresql:postgresql:42.7.11`, and `org.xerial:sqlite-jdbc:3.53.0.0`
+- `JdbcStorageFactory` resolves the SQLite path when needed, opens HikariCP for the selected backend, runs backend-specific Flyway migrations, and only then exposes repositories
+- `JdbcStorageRuntime` exposes JDBC-backed player profile, player rating, match settlement, and season repositories
 - `BootstrapRuntime` closes storage after queue, match, and player teardown
 - the durable data slices cover player profiles, queue rating seeds, completed match history, and aggregate player-kit stats
+- logical active seasons are seeded with `default`, and repositories resolve the current active season for each rating/history/stats operation so rollovers take effect without reopening storage
 - ranked settlement progression is deterministic and limited to completed ranked queue matches with `WIN` or `FORFEIT`; direct duel, unranked queue, timeout, and shutdown completions do not change ratings
 - ranked progression uses simple Elo with `K = 32`, applies a floor of `1`, and only writes rating updates when the `match_history` insert creates a new row
 - `/stats` is self-only, gated by `revprac.stats` with a default of `true`, and exposes summary and recent-history views backed by persisted per-kit stats plus ranked-kit ratings
+- `/records` is operator-facing, gated by `revprac.records`, exact player resolution, `revprac.records.lookup`, and `revprac.records.transfer`, and exposes cross-player summary/history plus schema-versioned YAML import/export
 - `MatchLifecycleService` captures a completion instant, settles completed matches before teardown, and preserves that completion time across retry; settlement failure retains the completed match and prevents teardown from returning players early
 - match history records direct duel, ranked queue, and unranked queue origins through `MatchOrigin`
-- active queues, active matches, duel requests, player sessions, and pending restorations remain in memory
+- active queues and active matches remain in memory as live state, with JDBC recovery sidecars used to rehydrate safe runtime state after restart
+- managed player baselines, pending restorations, queue tickets, and match shells are mirrored to runtime recovery tables; pairing tickets recover as searching, offline tickets recover lazily on join, and active matches restart from a fresh countdown only when both combatants are online
 
 Phase boundary:
 
-- seasons, PostgreSQL, import/export, rematch, post-match summaries, offline/cross-player lookup, active match recovery, active queue recovery, and season partitioning are deferred to later slices
-- storage config is SQLite-only for now; `storage.backend` is validated but does not open a second backend yet
+- physical PostgreSQL season partitioning is deferred to a future scale slice
 - migrations must fail closed during bootstrap; the runtime should not start with a broken storage layer
-- durable persistence here does not include any public cross-player lookup surface or season partitioning
+- durable persistence here does not include physical season partitioning
 
 Exit criteria:
 
@@ -352,32 +357,41 @@ Exit criteria:
 - completed match history and aggregate player-kit stats survive restart and duplicate settlement retries without double-counting
 - ranked queue settlements update ratings exactly once and only for decisive ranked outcomes
 - `/stats` exposes self-only summary/history reads from persisted data without requiring a live server state lookup
+- `/records` resolves players exactly, exposes cross-player summary/history, and imports or exports current-season records without double-counting on repeated import
 - migrations apply cleanly from empty and upgraded states
 - storage adapters remain isolated behind ports
 - runtime shutdown closes storage after gameplay teardown has completed
+- runtime recovery sidecars hydrate safe queue, match, player-session, and pending-restoration state during bootstrap
 
 Validation:
 
 ```bash
 ./gradlew test --tests '*LoadValidatedConfigServiceContractTest' --tests '*MatchHistoryEntryTest' --tests '*PlayerKitStatsTest' --tests '*MatchSettlementServiceTest'
-./gradlew test --tests '*MatchLifecycleServiceTest' --tests '*PlayerAvailabilityServiceTest'
+./gradlew test --tests '*RematchServiceTest' --tests '*PostMatchSummaryServiceTest' --tests '*RevPracDuelCommandTest'
+./gradlew test --tests '*MatchLifecycleServiceTest' --tests '*PlayerAvailabilityServiceTest' --tests '*RevPracPluginPhase6Test'
 ./gradlew test --tests '*RatingServiceTest' --tests '*PlayerRecordQueryServiceTest' --tests '*RevPracStatsCommandTest'
-./gradlew test --tests '*JdbcStorageFactoryTest' --tests '*RevPracPluginPhase6Test'
+./gradlew test --tests '*JdbcStorageFactoryTest' --tests '*PostgresJdbcStorageFactoryTest'
+./gradlew test --tests '*RuntimeRecoveryServiceTest' --tests '*PaperPlayerSessionListenerTest' --tests '*QueueServiceTest' --tests '*MatchLifecycleServiceTest'
 ./gradlew spotlessCheck test jacocoTestReport jar
 ./scripts/smoke-run-paper.sh
 ```
 
-When the later Phase 6 slices land, add dedicated fixture coverage for temp-dir and Testcontainers-backed PostgreSQL runs and keep them wired into `./gradlew test`.
-
 ### Phase 7: Staff Operations and Integrations
 
-Status: Planned
+Status: Implemented
 
 Goal:
 
 - add admin diagnostics and safe partial reloads
 - support scoreboard, placeholder, tab, combat-log, and party integrations
 - expose public plugin-facing events for external extensions
+
+Implemented scope:
+
+- `/revprac status`, `/revprac metrics`, `/revprac integrations`, `/revprac audit [limit]`, `/revprac reload registries`, and `/revprac season <list|create|activate>` are operator-facing staff tools under `revprac.admin`
+- safe partial reload is intentionally scoped to arena and kit registries, and fails closed while active queue tickets, matches, or arena reservations exist
+- optional integration support starts as fail-soft presence probing for scoreboard, PlaceholderAPI, TAB, combat-log, and party surfaces without making any integration a hard dependency
+- match lifecycle domain events are bridged into a versioned Bukkit `RevPracMatchEvent`; listener exceptions stay observational and do not break gameplay mutations
 
 Exit criteria:
 
@@ -396,11 +410,21 @@ Validation:
 
 ### Phase 8: Hardening and Scale
 
-Status: Deferred until core flows are stable
+Status: Implemented base slice
 
 Goal:
 
-- add rematch, party queue, events and tournaments, seasons, replay or audit support, profiling, compatibility policy, and operational metrics
+- add party queue, events and tournaments, seasons, replay or audit support, profiling, compatibility policy, and operational metrics
+
+Implemented scope:
+
+- logical seasons now have admin lifecycle operations for list, create, and activate; activation requires no active queue tickets, matches, or pending duel requests
+- durable audit rows are stored through a V5 JDBC migration and cover staff operations plus lifecycle events
+- operational metrics track published events, duel requests, completed matches, and torn-down matches
+- the compatibility policy is explicit: Paper/Minecraft 1.21.11 is the supported target, standard `plugin.yml` remains the entrypoint, and public event API compatibility starts at `RevPracMatchEvent.CONTRACT_VERSION = 1`
+- `domain.parties`, `application.parties`, `ports.parties`, and `InMemoryPartyRepository` provide a minimal party model with create, join, leave, status, leader promotion, disband, and queue eligibility snapshots
+- `domain.tournaments`, `application.tournaments`, `ports.tournaments`, and `InMemoryTournamentRepository` provide a minimal tournament lifecycle with create, open, register, start, and complete transitions
+- richer party matchmaking brackets, tournament command UX, physical PostgreSQL partitioning, and load-test harnesses remain future expansion points
 
 Exit criteria:
 
@@ -411,7 +435,9 @@ Exit criteria:
 Validation:
 
 ```bash
-./gradlew test
+./gradlew test --tests '*PartyTest' --tests '*PartyServiceTest' --tests '*InMemoryPartyRepositoryTest'
+./gradlew test --tests '*TournamentTest' --tests '*TournamentServiceTest' --tests '*InMemoryTournamentRepositoryTest'
+./gradlew test --tests '*RevPracAdminCommandTest' --tests '*PaperMatchEventBridgeTest' --tests '*JdbcStorageFactoryTest'
 ./gradlew spotlessCheck test jacocoTestReport jar
 ./scripts/smoke-run-paper.sh
 ```
@@ -476,7 +502,7 @@ RevPrac should use escalating gates as the implementation grows.
 ### Persistence gates
 
 - add temp-dir persistence tests under `./gradlew test`
-- add Testcontainers-backed coverage for migration and storage adapters when PostgreSQL support is introduced
+- PostgreSQL support and Testcontainers-backed migration/storage coverage are already introduced; keep extending that coverage as new storage paths land, especially future physical PostgreSQL season partitioning
 - verify migration fixtures against empty, current, and upgraded schemas
 
 ### Scenario and scale gates

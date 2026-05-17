@@ -21,9 +21,10 @@ RevPrac is a Minecraft practice core plugin for Paper 1.21.11. It is intended to
 
 ## Current Non-Goals
 
-- Arena and kit registry/setup groundwork exists, direct duel/match lifecycle gameplay is implemented, and in-memory queue orchestration/matchmaking now exists.
-- PostgreSQL, seasons, import/export, rematch, post-match summaries, offline/cross-player lookup, active match recovery, active queue recovery, and season partitioning remain future work.
-- No durable persistence for active queues, active matches, duel requests, player sessions, or pending restorations.
+- Arena and kit registry/setup, direct duel/match lifecycle gameplay, in-memory queue orchestration/matchmaking, persisted ratings/history/stats, logical seasons, record import/export, operator-facing cross-player lookup, runtime recovery sidecars, staff operations, audit, metrics, and public match events now exist.
+- Active queue tickets, active matches, managed player sessions, and pending restorations are live in-memory state with JDBC recovery sidecar mirrors; duel requests remain runtime-only.
+- Party and tournament support is currently a minimal plain-Java domain/application slice without a player-facing command UX.
+- Physical PostgreSQL season partitioning remains future work until scale evidence justifies it.
 - No compatibility promise beyond the documented Paper 1.21.11 direction.
 
 ## Product Principles

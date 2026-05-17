@@ -179,6 +179,17 @@ public final class DuelRequestService {
         intakeClosed.set(true);
     }
 
+    public long pendingRequestCount() {
+        mutationLock.lock();
+        try {
+            return duelRequestRepository.findAll().stream()
+                    .filter(request -> request.state() == DuelRequestState.PENDING)
+                    .count();
+        } finally {
+            mutationLock.unlock();
+        }
+    }
+
     private DuelRequest requirePendingRequest(PlayerId requesterId, PlayerId targetId) {
         return duelRequestRepository.findPendingByPlayers(requesterId, targetId)
                 .orElseThrow(() -> new IllegalStateException("pending duel request not found"));

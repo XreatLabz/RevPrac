@@ -188,6 +188,21 @@ final class PaperPlayerSessionListenerTest {
         }
 
         @Override
+        public java.util.List<PlayerProfile> findByLastKnownNameIgnoreCase(String lastKnownName) {
+            return java.util.List.of();
+        }
+
+        @Override
+        public void delete(PlayerId playerId) {
+            profiles.remove(playerId);
+        }
+
+        @Override
+        public void restoreExact(PlayerProfile profile) {
+            profiles.put(profile.playerId(), profile);
+        }
+
+        @Override
         public void upsert(PlayerProfile profile) {
             profiles.put(profile.playerId(), profile);
         }

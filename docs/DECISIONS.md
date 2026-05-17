@@ -128,5 +128,59 @@ This log records accepted project decisions. Add new entries when a choice affec
 - Decision: Use a simple Elo progression with `K = 32` and a floor of `1` for ranked ratings. Rating updates remain idempotent because settlement only applies them when the `match_history` insert creates a new row.
 - Decision: Expose `/stats` as a self-only command with `revprac.stats` defaulting to `true`, and support `summary <kit>` plus `history [page]` over persisted per-kit stats, ranked-kit ratings, and recent match history.
 - Decision: Cap `/stats history [page]` to a stable maximum page of `100`, and render missing opponent profile names as `Unknown player` instead of exposing raw UUIDs in player-facing history output.
-- Decision: Keep PostgreSQL, seasons, import/export, rematch, post-match summaries, offline/cross-player lookup, active match recovery, active queue recovery, and season partitioning deferred.
+- Decision: Keep PostgreSQL, seasons, import/export, offline/cross-player lookup, active match recovery, active queue recovery, and season partitioning deferred.
 - Rationale: Phase 6C adds the competitive progression and self-service query slice without making active gameplay state durable yet or broadening the storage surface prematurely.
+
+## 2026-05-06: Task 1 Optional PostgreSQL And Logical Active Seasons
+
+- Decision: Storage now supports SQLite as the default backend and PostgreSQL as an optional backend, with backend-specific config validation so `storage.sqlite-path` is required only for SQLite.
+- Decision: The active season is logical scope, not process-start state: repositories resolve the current active season for each rating/history/stats operation, so season changes take effect without reopening storage.
+- Decision: `player_profiles` remain global across seasons, while ratings, match history, and per-kit stats are season-scoped.
+- Decision: Physical PostgreSQL table partitioning by season remains deferred, along with the rest of the unfinished Phase 6 completion work at that point: import/export, offline/cross-player lookup, active match recovery, and active queue recovery.
+- Rationale: Task 1 broadens the storage adapter safely without changing active runtime ownership boundaries, and it keeps logical season rollover available now without committing to a premature physical partitioning design.
+
+## 2026-05-06: Task 2 Records Lookup And Transfer
+
+- Decision: Keep `/stats` self-only, and expose cross-player lookup plus transfer through a separate `/records` command with `revprac.records` defaulting to `op`, `revprac.records.lookup`, and `revprac.records.transfer`.
+- Decision: Player selection for `/records` is UUID-first, then exact case-insensitive `lastKnownName`; ambiguous names fail closed and require UUID disambiguation.
+- Decision: Player record transfer artifacts are schema-versioned YAML bundles stored under `exports/player-records/<uuid>.yml` and imported only from simple `.yml` filenames under `imports/player-records/`.
+- Decision: Transfer imports fail closed on duplicate logical rows: repeated `ratings.kit-id`, `stats.kit-id`, or `history.match-id` values are invalid bundle content.
+- Decision: JDBC-backed transfer export captures the active season once and reads profile, ratings, stats, and history through one JDBC connection for a consistent current-season snapshot.
+- Decision: Transfer imports are atomic for the addressed player record state: profile, current-season ratings, current-season stats, and any player-involving history rows added by the import roll back together if a later import step fails.
+- Decision: Import/export operates on the current active season for ratings, stats, and history while keeping `player_profiles` global, and repeated import must be idempotent by replacing per-player rating/stat aggregates while only upserting match-history rows.
+- Rationale: Operator-facing lookup and transfer need an exact, bounded contract that stays safe for seasonal storage, avoids path traversal, and does not reintroduce double-counting on repeated imports.
+
+## 2026-05-06: Task 3 Rematch And Post-Match Summaries
+
+- Decision: Add `/duel rematch <player>` under the existing `revprac.duel` permission, while preserving `/duel request <player> <arena> <kit>` for target names that collide with reserved subcommands such as `rematch`.
+- Decision: Resolve rematch eligibility from the latest mutual completed current-season match between the requester and target, regardless of participant order or original flow, and reuse `matches.duel-request-expiry-seconds` as the exclusive rematch window.
+- Decision: Rematch creates a fresh normal duel request from the current time through `DuelRequestService.request(...)`, so duplicate, busy, intake-closed, and resource-validation failures stay centralized and unchanged.
+- Decision: Post-match summaries are plain chat, participant-only, best-effort, non-persistent messages sent only after settlement, lobby return, arena release, and match deletion have all succeeded.
+- Decision: Shutdown outcomes do not send summaries, while ranked decisive queue summaries include exact per-recipient rating deltas derived from the pre/post progression captured during the first successful settlement attempt and replayed across teardown retries without recomputing ratings.
+- Rationale: Rematch should stay a thin history-backed convenience path on top of the existing duel-request contract, and post-match messaging must never compromise teardown or accidentally double-apply ranked progression during retryable drains.
+
+## 2026-05-17: Task 4 Runtime Recovery Sidecars
+
+- Decision: Keep live active queue tickets, active matches, player sessions, and pending restorations in memory, and mirror recoverable runtime state into JDBC sidecar tables instead of replacing live repositories with fully durable repositories.
+- Decision: Recover pending restorations first, then managed sessions, queue tickets, and match shells during bootstrap before already-online player tracking and ticker startup.
+- Decision: Offline managed sessions become `PLUGIN_DISABLE` pending restorations, offline queue tickets stay in recovery storage until the player rejoins, and `PAIRING` queue tickets recover as `SEARCHING`.
+- Decision: Active matches recover only when both combatants are online, restart from a fresh countdown, and drop spectators. Completed retained matches can recover without online combatants.
+- Decision: Match history uniqueness is season-scoped with `(season_id, match_id)`, so current-season imports can copy the same historical match id into a newly active season without being skipped by global match-id idempotency.
+- Rationale: Runtime recovery should prevent common restart/reload loss without pretending to preserve unsafe mid-fight Bukkit state or widening active queue/match ownership beyond the existing in-memory model.
+
+## 2026-05-17: Phase 7 Staff Operations And Public Events
+
+- Decision: `/revprac` now owns staff diagnostics, registry reload, integration probes, audit reads, metrics reads, and season lifecycle commands under the existing `revprac.admin` permission.
+- Decision: Partial reload is intentionally limited to arena and kit registries. It validates YAML first, swaps services only after validation, and refuses to run with active queue tickets, matches, or arena reservations.
+- Decision: Optional integration support begins as fail-soft presence checks for scoreboard, PlaceholderAPI, TAB, combat-log, and party surfaces without making those plugins hard dependencies.
+- Decision: Public plugin-facing events wrap the existing domain `MatchEvent` stream in Bukkit `RevPracMatchEvent` with `CONTRACT_VERSION = 1`; event listeners are observational and cannot break gameplay mutations.
+- Rationale: Staff operations should improve recovery and observability without mutating live queue/match config in place, and public events should expose the existing domain lifecycle rather than duplicating it.
+
+## 2026-05-17: Phase 8 Hardening Base
+
+- Decision: Add V5 `audit_log` storage and lightweight in-memory operational metrics. Metrics count event publications and key lifecycle totals; audit rows capture staff operations and match lifecycle events.
+- Decision: Season admin supports list, create, and activate. Activation is transactional in JDBC and requires no active queue tickets, matches, or pending duel requests.
+- Decision: Paper/Minecraft `1.21.11` remains the compatibility target, standard `plugin.yml` remains the entrypoint, and `RevPracMatchEvent.CONTRACT_VERSION = 1` starts the public event API compatibility contract.
+- Decision: Add party and tournament support as separate plain-Java modules instead of widening the existing single-player `QueueTicket` and 1v1 `MatchParticipants` models in place.
+- Decision: The party slice covers in-memory create, join, leave, leader promotion, disband, status, and exact-size queue eligibility snapshots. The tournament slice covers in-memory create, open, register, start, and complete lifecycle.
+- Rationale: Phase 8 should harden and extend the product without forcing a redesign of the proven duel, queue, and match lifecycle paths before richer UX and load evidence exist.

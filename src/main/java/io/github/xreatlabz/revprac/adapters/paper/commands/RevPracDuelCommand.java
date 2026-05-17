@@ -2,6 +2,7 @@ package io.github.xreatlabz.revprac.adapters.paper.commands;
 
 import io.github.xreatlabz.revprac.application.matches.DuelRequestService;
 import io.github.xreatlabz.revprac.application.matches.MatchLifecycleService;
+import io.github.xreatlabz.revprac.application.matches.RematchService;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaId;
 import io.github.xreatlabz.revprac.domain.kits.KitId;
 import io.github.xreatlabz.revprac.domain.players.PlayerId;
@@ -20,12 +21,17 @@ public final class RevPracDuelCommand implements CommandExecutor {
 
     private final Server server;
     private final DuelRequestService duelRequestService;
+    private final RematchService rematchService;
     private final MatchLifecycleService matchLifecycleService;
 
     public RevPracDuelCommand(
-            Server server, DuelRequestService duelRequestService, MatchLifecycleService matchLifecycleService) {
+            Server server,
+            DuelRequestService duelRequestService,
+            RematchService rematchService,
+            MatchLifecycleService matchLifecycleService) {
         this.server = Objects.requireNonNull(server, "server");
         this.duelRequestService = Objects.requireNonNull(duelRequestService, "duelRequestService");
+        this.rematchService = Objects.requireNonNull(rematchService, "rematchService");
         this.matchLifecycleService = Objects.requireNonNull(matchLifecycleService, "matchLifecycleService");
     }
 
@@ -51,6 +57,7 @@ public final class RevPracDuelCommand implements CommandExecutor {
 
             return switch (args[0].toLowerCase(java.util.Locale.ROOT)) {
                 case "request" -> handleExplicitRequest(player, args);
+                case "rematch" -> handleRematch(player, args);
                 case "accept" -> handleAccept(player, args);
                 case "deny", "decline" -> handleDeny(player, args);
                 case "cancel" -> handleCancel(player, args);
@@ -87,6 +94,18 @@ public final class RevPracDuelCommand implements CommandExecutor {
         }
 
         return handleRequest(sender, new String[] {args[1], args[2], args[3]});
+    }
+
+    private boolean handleRematch(Player sender, String[] args) {
+        if (args.length != 2) {
+            sender.sendMessage("Usage: /duel rematch <player>");
+            return true;
+        }
+
+        Player target = requireOnlinePlayer(args[1]);
+        rematchService.request(new PlayerId(sender.getUniqueId()), new PlayerId(target.getUniqueId()));
+        sender.sendMessage("Sent duel request to " + target.getName() + ".");
+        return true;
     }
 
     private boolean handleAccept(Player sender, String[] args) {

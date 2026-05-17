@@ -87,12 +87,26 @@ public final class RatingService {
         RatingSnapshot loserCurrent = ratingStore.currentRating(loserId, kitId, defaultRating);
         int winnerDelta = ratingDelta(winnerCurrent.rating(), loserCurrent.rating());
         int loserDelta = -winnerDelta;
+        PlayerRating winnerBefore = new PlayerRating(
+                winnerId,
+                kitId,
+                winnerCurrent.rating(),
+                winnerCurrent.wins(),
+                winnerCurrent.losses(),
+                updatedAt);
         PlayerRating winner = new PlayerRating(
                 winnerId,
                 kitId,
                 winnerCurrent.rating() + winnerDelta,
                 winnerCurrent.wins() + 1,
                 winnerCurrent.losses(),
+                updatedAt);
+        PlayerRating loserBefore = new PlayerRating(
+                loserId,
+                kitId,
+                loserCurrent.rating(),
+                loserCurrent.wins(),
+                loserCurrent.losses(),
                 updatedAt);
         PlayerRating loser = new PlayerRating(
                 loserId,
@@ -101,7 +115,7 @@ public final class RatingService {
                 loserCurrent.wins(),
                 loserCurrent.losses() + 1,
                 updatedAt);
-        return Optional.of(new RatingProgression(winner, loser));
+        return Optional.of(new RatingProgression(winnerBefore, winner, loserBefore, loser));
     }
 
     public record QueueJoinRating(int rating, boolean durableSeedRequired) {

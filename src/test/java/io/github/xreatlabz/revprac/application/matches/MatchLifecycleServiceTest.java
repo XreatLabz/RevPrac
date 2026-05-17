@@ -15,6 +15,7 @@ import io.github.xreatlabz.revprac.adapters.storage.InMemoryPlayerSessionReposit
 import io.github.xreatlabz.revprac.application.arenas.ArenaRegistryService;
 import io.github.xreatlabz.revprac.application.kits.KitRegistryService;
 import io.github.xreatlabz.revprac.application.players.PlayerSessionService;
+import io.github.xreatlabz.revprac.application.ratings.RatingService;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaCuboid;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaDefinition;
 import io.github.xreatlabz.revprac.domain.arenas.ArenaId;
@@ -42,12 +43,15 @@ import io.github.xreatlabz.revprac.domain.players.PlayerSafetySnapshot;
 import io.github.xreatlabz.revprac.domain.players.PlayerStatusSnapshot;
 import io.github.xreatlabz.revprac.domain.players.TransitionReason;
 import io.github.xreatlabz.revprac.domain.queues.QueueMode;
+import io.github.xreatlabz.revprac.domain.ratings.PlayerRating;
 import io.github.xreatlabz.revprac.domain.stats.MatchSettlement;
 import io.github.xreatlabz.revprac.domain.stats.PlayerKitStats;
 import io.github.xreatlabz.revprac.ports.arenas.ArenaResetPort;
 import io.github.xreatlabz.revprac.ports.matches.MatchPlayerPort;
+import io.github.xreatlabz.revprac.ports.matches.PostMatchSummaryPort;
 import io.github.xreatlabz.revprac.ports.matches.MatchSettlementRepository;
 import io.github.xreatlabz.revprac.ports.players.PlayerStatePort;
+import io.github.xreatlabz.revprac.ports.ratings.PlayerRatingRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -160,6 +164,11 @@ final class MatchLifecycleServiceTest {
         assertEquals(java.util.Optional.of(harness.requester()), history.winnerId());
         assertEquals(1, harness.settlementStore().findStats(harness.requester(), harness.kitId()).orElseThrow().wins());
         assertEquals(1, harness.settlementStore().findStats(harness.target(), harness.kitId()).orElseThrow().losses());
+        assertEquals(
+                List.of(
+                        "Match summary: opponent=target kit=kit-one result=win end=win",
+                        "Match summary: opponent=requester kit=kit-one result=loss end=win"),
+                harness.postMatchSummaryPort.allMessages());
     }
 
     @Test
@@ -214,6 +223,7 @@ final class MatchLifecycleServiceTest {
         assertEquals(PlayerContext.MATCH, harness.playerSessions.find(harness.target()).orElseThrow().context());
         assertEquals(PlayerContext.SPECTATOR, harness.playerSessions.find(harness.spectator()).orElseThrow().context());
         assertEquals(List.of(), harness.playerStatePort.restoredPlayers, "cleanup failure must stop before lobby returns");
+        assertEquals(List.of(), harness.postMatchSummaryPort.allMessages(), "summary must wait until teardown succeeds");
     }
 
     @Test
@@ -300,6 +310,75 @@ final class MatchLifecycleServiceTest {
         assertEquals(1,
                 harness.events.stream().filter(MatchEvent.MatchTornDown.class::isInstance).count(),
                 "shutdown should emit one teardown event after retry succeeds");
+        assertEquals(List.of(), harness.postMatchSummaryPort.allMessages(), "shutdown outcomes should not send summaries");
+    }
+
+    @Test
+    void postMatchSummaryWaitsForRetryableTeardownFailureThenSendsToParticipantsOnly() {
+        Harness harness = new Harness(new MatchRuleset(1, 8, true));
+        Match match = harness.startAcceptedDuel();
+        harness.matchLifecycleService.tick();
+        harness.join(harness.spectator());
+        harness.matchLifecycleService.spectate(harness.spectator(), harness.requester());
+        harness.matchPlayerPort.failClearFor(harness.requester(), "clear failed for requester");
+
+        IllegalStateException failure = assertThrows(
+                IllegalStateException.class,
+                () -> harness.matchLifecycleService.completeByDeath(harness.target()));
+        assertEquals("clear failed for requester", failure.getMessage());
+        assertEquals(List.of(), harness.postMatchSummaryPort.allMessages());
+
+        harness.matchPlayerPort.clearFailures.clear();
+        harness.matchLifecycleService.tearDown(match.id());
+
+        assertEquals(
+                List.of(
+                        "Match summary: opponent=target kit=kit-one result=win end=win",
+                        "Match summary: opponent=requester kit=kit-one result=loss end=win"),
+                harness.postMatchSummaryPort.allMessages());
+        assertEquals(List.of(), harness.postMatchSummaryPort.messagesFor(harness.spectator()));
+    }
+
+    @Test
+    void rankedQueueTeardownRetryReusesCachedDeltasAndSendsOneSummaryPerParticipantAfterRetry() {
+        RankedSettlementRepository settlementRepository = new RankedSettlementRepository();
+        Harness harness = new Harness(
+                new MatchRuleset(1, 8, true),
+                new MatchSettlementService(settlementRepository, new RatingService(settlementRepository), 1000));
+        harness.queueParticipants();
+        Match match = harness.matchLifecycleService.startQueuedMatch(
+                harness.requester(), harness.target(), harness.kitId(), QueueMode.RANKED);
+        harness.matchLifecycleService.tick();
+        harness.matchPlayerPort.failClearFor(harness.requester(), "clear failed for requester");
+
+        IllegalStateException failure = assertThrows(
+                IllegalStateException.class,
+                () -> harness.matchLifecycleService.completeByDeath(harness.target()));
+
+        assertEquals("clear failed for requester", failure.getMessage());
+        assertEquals(1, settlementRepository.recordCalls);
+        assertEquals(1, settlementRepository.appliedCalls);
+        assertEquals(List.of(), harness.postMatchSummaryPort.allMessages());
+        assertEquals(
+                new PlayerRating(harness.requester(), harness.kitId(), 1016, 1, 0, Instant.parse("2026-05-02T14:30:00Z")),
+                settlementRepository.find(harness.requester(), harness.kitId()).orElseThrow());
+        assertEquals(
+                new PlayerRating(harness.target(), harness.kitId(), 984, 0, 1, Instant.parse("2026-05-02T14:30:00Z")),
+                settlementRepository.find(harness.target(), harness.kitId()).orElseThrow());
+
+        harness.matchPlayerPort.clearFailures.clear();
+        harness.matchLifecycleService.tearDown(match.id());
+
+        assertTrue(harness.matchRepository.find(match.id()).isEmpty());
+        assertEquals(1, settlementRepository.recordCalls);
+        assertEquals(1, settlementRepository.appliedCalls);
+        assertEquals(
+                List.of(
+                        "Match summary: opponent=target kit=kit-one result=win end=win rating=1016 (+16)",
+                        "Match summary: opponent=requester kit=kit-one result=loss end=win rating=984 (-16)"),
+                harness.postMatchSummaryPort.allMessages());
+        assertEquals(1, harness.postMatchSummaryPort.messagesFor(harness.requester()).size());
+        assertEquals(1, harness.postMatchSummaryPort.messagesFor(harness.target()).size());
     }
 
     @Test
@@ -558,6 +637,7 @@ final class MatchLifecycleServiceTest {
         private final PlayerSessionService playerSessionService =
                 new PlayerSessionService(playerSessions, new InMemoryPendingRestorationRepository(), playerStatePort);
         private final FakeMatchPlayerPort matchPlayerPort = new FakeMatchPlayerPort();
+        private final CapturingPostMatchSummaryPort postMatchSummaryPort = new CapturingPostMatchSummaryPort();
         private final MatchSettlementRepository settlementRepository;
         private final List<MatchEvent> events = new ArrayList<>();
         private final MatchLifecycleService matchLifecycleService;
@@ -582,6 +662,16 @@ final class MatchLifecycleServiceTest {
             });
         }
 
+        private Harness(MatchRuleset ruleset, MatchSettlementService matchSettlementService) {
+            this(
+                    ruleset,
+                    new InMemoryMatchSettlementRepository(),
+                    matchSettlementService,
+                    Clock.fixed(Instant.parse("2026-05-02T14:30:00Z"), ZoneOffset.UTC),
+                    event -> {
+                    });
+        }
+
         private Harness(
                 MatchRuleset ruleset,
                 MatchSettlementRepository settlementRepository,
@@ -598,6 +688,20 @@ final class MatchLifecycleServiceTest {
                 MatchSettlementRepository settlementRepository,
                 Clock clock,
                 java.util.function.Consumer<MatchEvent> eventSink) {
+            this(
+                    ruleset,
+                    settlementRepository,
+                    new MatchSettlementService(settlementRepository),
+                    clock,
+                    eventSink);
+        }
+
+        private Harness(
+                MatchRuleset ruleset,
+                MatchSettlementRepository settlementRepository,
+                MatchSettlementService matchSettlementService,
+                Clock clock,
+                java.util.function.Consumer<MatchEvent> eventSink) {
             this.ruleset = ruleset;
             this.settlementRepository = settlementRepository;
             this.matchLifecycleService = new MatchLifecycleService(
@@ -607,7 +711,8 @@ final class MatchLifecycleServiceTest {
                     kitRegistryService,
                     matchPlayerPort,
                     ruleset,
-                    new MatchSettlementService(settlementRepository),
+                    matchSettlementService,
+                    new PostMatchSummaryService(postMatchSummaryPort),
                     clock,
                     event -> {
                         events.add(event);
@@ -873,13 +978,13 @@ final class MatchLifecycleServiceTest {
         private boolean failNextRecord = true;
 
         @Override
-        public void record(MatchSettlement settlement) {
+        public boolean record(MatchSettlement settlement) {
             recordAttempts++;
             if (failNextRecord) {
                 failNextRecord = false;
                 throw new IllegalStateException("settlement failed once");
             }
-            delegate.record(settlement);
+            return delegate.record(settlement);
         }
 
         @Override
@@ -891,10 +996,160 @@ final class MatchLifecycleServiceTest {
         public Optional<PlayerKitStats> findStats(PlayerId playerId, KitId kitId) {
             return delegate.findStats(playerId, kitId);
         }
+
+        @Override
+        public java.util.List<PlayerKitStats> findStatsByPlayer(PlayerId playerId) {
+            return delegate.findStatsByPlayer(playerId);
+        }
+
+        @Override
+        public java.util.List<MatchHistoryEntry> findRecentHistory(PlayerId playerId, int limit, int offset) {
+            return delegate.findRecentHistory(playerId, limit, offset);
+        }
+
+        @Override
+        public java.util.List<MatchHistoryEntry> findAllHistory(PlayerId playerId) {
+            return delegate.findAllHistory(playerId);
+        }
+
+        @Override
+        public void validateImportHistoryCompatibility(PlayerId playerId, java.util.List<MatchHistoryEntry> history) {
+            delegate.validateImportHistoryCompatibility(playerId, history);
+        }
+
+        @Override
+        public void importPlayerRecords(PlayerId playerId, java.util.List<PlayerKitStats> stats, java.util.List<MatchHistoryEntry> history) {
+            delegate.importPlayerRecords(playerId, stats, history);
+        }
+
+        @Override
+        public void restoreImportedPlayerRecords(
+                PlayerId playerId, java.util.List<PlayerKitStats> stats, java.util.List<MatchHistoryEntry> history) {
+            delegate.restoreImportedPlayerRecords(playerId, stats, history);
+        }
+    }
+
+    private static final class RankedSettlementRepository
+            implements MatchSettlementRepository, PlayerRatingRepository {
+        private final InMemoryMatchSettlementRepository delegate = new InMemoryMatchSettlementRepository();
+        private final Map<RatingKey, PlayerRating> ratings = new HashMap<>();
+        private int recordCalls;
+        private int appliedCalls;
+
+        @Override
+        public Optional<PlayerRating> find(PlayerId playerId, KitId kitId) {
+            return Optional.ofNullable(ratings.get(new RatingKey(playerId, kitId)));
+        }
+
+        @Override
+        public List<PlayerRating> findByPlayer(PlayerId playerId) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
+        public void replaceAllForPlayer(PlayerId playerId, List<PlayerRating> replacementRatings) {
+            throw new UnsupportedOperationException("not needed");
+        }
+
+        @Override
+        public void upsert(PlayerRating rating) {
+            ratings.put(new RatingKey(rating.playerId(), rating.kitId()), rating);
+        }
+
+        @Override
+        public boolean record(MatchSettlement settlement) {
+            recordCalls++;
+            boolean applied = delegate.record(settlement);
+            if (applied) {
+                appliedCalls++;
+                for (PlayerRating rating : settlement.ratingUpdates()) {
+                    upsert(rating);
+                }
+            }
+            return applied;
+        }
+
+        @Override
+        public Optional<MatchHistoryEntry> findHistory(MatchId matchId) {
+            return delegate.findHistory(matchId);
+        }
+
+        @Override
+        public Optional<PlayerKitStats> findStats(PlayerId playerId, KitId kitId) {
+            return delegate.findStats(playerId, kitId);
+        }
+
+        @Override
+        public java.util.List<PlayerKitStats> findStatsByPlayer(PlayerId playerId) {
+            return delegate.findStatsByPlayer(playerId);
+        }
+
+        @Override
+        public java.util.List<MatchHistoryEntry> findRecentHistory(PlayerId playerId, int limit, int offset) {
+            return delegate.findRecentHistory(playerId, limit, offset);
+        }
+
+        @Override
+        public java.util.List<MatchHistoryEntry> findAllHistory(PlayerId playerId) {
+            return delegate.findAllHistory(playerId);
+        }
+
+        @Override
+        public void validateImportHistoryCompatibility(PlayerId playerId, java.util.List<MatchHistoryEntry> history) {
+            delegate.validateImportHistoryCompatibility(playerId, history);
+        }
+
+        @Override
+        public void importPlayerRecords(
+                PlayerId playerId, java.util.List<PlayerKitStats> stats, java.util.List<MatchHistoryEntry> history) {
+            delegate.importPlayerRecords(playerId, stats, history);
+        }
+
+        @Override
+        public void restoreImportedPlayerRecords(
+                PlayerId playerId, java.util.List<PlayerKitStats> stats, java.util.List<MatchHistoryEntry> history) {
+            delegate.restoreImportedPlayerRecords(playerId, stats, history);
+        }
+    }
+
+    private static final class CapturingPostMatchSummaryPort implements PostMatchSummaryPort {
+        private final Map<PlayerId, List<String>> messages = new HashMap<>();
+
+        @Override
+        public Optional<String> playerName(PlayerId playerId) {
+            if (playerId.equals(player("requester"))) {
+                return Optional.of("requester");
+            }
+            if (playerId.equals(player("target"))) {
+                return Optional.of("target");
+            }
+            if (playerId.equals(player("spectator"))) {
+                return Optional.of("spectator");
+            }
+            return Optional.empty();
+        }
+
+        @Override
+        public void send(PlayerId playerId, String message) {
+            messages.computeIfAbsent(playerId, ignored -> new ArrayList<>()).add(message);
+        }
+
+        private List<String> messagesFor(PlayerId playerId) {
+            return messages.getOrDefault(playerId, List.of());
+        }
+
+        private List<String> allMessages() {
+            return java.util.stream.Stream.of(player("requester"), player("target"), player("spectator"))
+                    .flatMap(playerId -> messagesFor(playerId).stream())
+                    .toList();
+        }
     }
 
     private static PlayerId player(String seed) {
         return new PlayerId(UUID.nameUUIDFromBytes(seed.getBytes()));
+    }
+
+    private record RatingKey(PlayerId playerId, KitId kitId) {
     }
 
     private static PlayerSafetySnapshot snapshot(PlayerId playerId) {
