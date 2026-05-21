@@ -1,6 +1,6 @@
 [versions]
 paper = "1.21.11-R0.1-SNAPSHOT"
-junit = "6.0.3"
+junit = "6.1.0"
 mockbukkit = "4.110.0"
 jacoco = "0.8.14"
 run-paper = "3.0.2"
